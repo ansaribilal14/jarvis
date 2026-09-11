@@ -166,7 +166,8 @@ object AgentEngine {
 
                 // 2. DECIDE --------------------------------------------------
                 val decision = decide(goal, screen, history, suspicion)
-                update { it.copy(route = router.routeLabel()) }
+                val routeLabel = router.routeLabel()
+                update { it.copy(route = routeLabel) }
 
                 if (decision.action == null) {
                     finalResponse = decision.response
@@ -207,7 +208,7 @@ object AgentEngine {
                 update { it.copy(status = AgentStatus.ACTING, activeTool = action.tool, currentApp = screen?.packageName) }
                 actionsUsed++
                 steps.add(StepUi(steps.size + 1, action.tool, action.tool, "RUNNING"))
-                update { }
+                update { it }
 
                 val result: ToolResult = try {
                     withTimeoutOrNull(30_000) {
@@ -234,7 +235,7 @@ object AgentEngine {
                     },
                     verdict = result.message.take(120),
                 )
-                update { }
+                update { it }
                 c.memory.addStep(taskId, steps.size, action.tool, action.args.toString(), steps.last().status, result.message, verdict)
                 history.add(action to verdict)
 

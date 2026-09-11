@@ -84,7 +84,8 @@ class SpeechInput(private val context: Context) {
                 _events.tryEmit(VoiceEvent.Ended)
             }
             override fun onPartialResults(partialResults: Bundle?) {
-                val text = partialResults?.getStringArrayList(SpeechRecognizer.PARTIAL_RESULTS)?.firstOrNull()
+                // Framework sends partials under the same results key.
+                val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 if (!text.isNullOrBlank()) _events.tryEmit(VoiceEvent.Partial(text))
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}

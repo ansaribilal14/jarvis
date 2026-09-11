@@ -22,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.service.OverlayService
 import com.jarvis.mobile.ui.components.SectionCard
 import com.jarvis.mobile.ui.components.StatusChip
+import kotlinx.coroutines.launch
 
 /** Settings (spec: APP SETTINGS) - everything discoverable, nothing buried. */
 @Composable
@@ -40,6 +42,7 @@ fun SettingsScreen() {
     val context = LocalContext.current
     val container = JarvisApp.instance.container
     val s = container.settings
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     val localOnly by s.localOnly.collectAsState(initial = true)
     val voiceIn by s.voiceInput.collectAsState(initial = true)
@@ -74,7 +77,7 @@ fun SettingsScreen() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(checked = localOnly, onCheckedChange = { s.setLocalOnly(it) })
+                Switch(checked = localOnly, onCheckedChange = { v -> scope.launch { s.setLocalOnly(v) } })
             }
             if (!localOnly) {
                 var url by remember(remoteUrl) { mutableStateOf(remoteUrl) }
@@ -82,7 +85,7 @@ fun SettingsScreen() {
                 OutlinedTextField(url, { url = it }, label = { Text("Remote base URL (OpenAI-compatible)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(model, { model = it }, label = { Text("Remote model name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { s.setRemoteBaseUrl(url.trim()); s.setRemoteModel(model.trim()) }) { Text("Save") }
+                    TextButton(onClick = { scope.launch { s.setRemoteBaseUrl(url.trim()); s.setRemoteModel(model.trim()) } }) { Text("Save") }
                     Text("API key is stored in the encrypted vault (Security section below it is never logged).", style = MaterialTheme.typography.labelMedium)
                 }
             }
@@ -92,19 +95,19 @@ fun SettingsScreen() {
         SectionCard("Appearance") {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("SYSTEM", "DARK", "LIGHT").forEach { mode ->
-                    FilterChip(selected = theme == mode, onClick = { s.setTheme(mode) }, label = { Text(mode.lowercase()) })
+                    FilterChip(selected = theme == mode, onClick = { scope.launch { s.setTheme(mode) } }, label = { Text(mode.lowercase()) })
                 }
             }
         }
 
         SectionCard("Voice") {
-            SettingToggle("Voice input (push-to-talk mic)", voiceIn) { s.setVoiceInput(it) }
-            SettingToggle("Speak status updates", voiceOut) { s.setVoiceOutput(it) }
+            SettingToggle("Voice input (push-to-talk mic)", voiceIn) { v -> scope.launch { s.setVoiceInput(v) } }
+            SettingToggle("Speak status updates", voiceOut) { v -> scope.launch { s.setVoiceOutput(v) } }
         }
 
         SectionCard("Automation & safety") {
-            SettingToggle("Pause when I touch the screen", pauseOnTouch) { s.setPauseOnUserTouch(it) }
-            SettingToggle("Auto-approve medium-risk actions", autoApprove) { s.setAutoApproveMedium(it) }
+            SettingToggle("Pause when I touch the screen", pauseOnTouch) { v -> scope.launch { s.setPauseOnUserTouch(v) } }
+            SettingToggle("Auto-approve medium-risk actions", autoApprove) { v -> scope.launch { s.setAutoApproveMedium(v) } }
             Text(
                 "HIGH-risk actions (payments, account changes, sensitive sharing) ALWAYS require confirmation - this cannot be disabled.",
                 style = MaterialTheme.typography.bodyMedium,
@@ -117,7 +120,7 @@ fun SettingsScreen() {
                 Text("Inference threads (0 = auto)", Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0, 2, 4).forEach { t ->
-                        FilterChip(selected = threads == t, onClick = { s.setInferenceThreads(t) }, label = { Text("$t") })
+                        FilterChip(selected = threads == t, onClick = { scope.launch { s.setInferenceThreads(t) } }, label = { Text("$t") })
                     }
                 }
             }
@@ -125,7 +128,7 @@ fun SettingsScreen() {
                 Text("Max actions per task", Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(6, 12, 20).forEach { v ->
-                        FilterChip(selected = maxActions == v, onClick = { s.setMaxActions(v) }, label = { Text("$v") })
+                        FilterChip(selected = maxActions == v, onClick = { scope.launch { s.setMaxActions(v) } }, label = { Text("$v") })
                     }
                 }
             }
@@ -147,7 +150,7 @@ fun SettingsScreen() {
                                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${context.packageName}")),
                             )
                         } else {
-                            s.setOverlayEnabled(on)
+                            scope.launch { s.setOverlayEnabled(on) }
                             if (on) OverlayService.start(context) else OverlayService.stop(context)
                         }
                     },

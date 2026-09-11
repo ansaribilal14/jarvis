@@ -170,7 +170,13 @@ class ShareContentTool : Tool(
         return runCatching {
             context.startActivity(chooser)
             T.settle(600)
-            ToolResult.ok("Share sheet opened with the text. Complete the send in the target app.", Verification.UNVERIFIED, recoveryHint = "user-may-need-to-pick-target")
+            ToolResult(
+                com.jarvis.mobile.core.tools.ToolStatus.SUCCESS,
+                "Share sheet opened with the text. Complete the send in the target app.",
+                Verification.UNVERIFIED,
+                null,
+                "user-may-need-to-pick-target",
+            )
         }.getOrElse { ToolResult.fail("Could not open share sheet: ${it.message?.take(80)}") }
     }
 }

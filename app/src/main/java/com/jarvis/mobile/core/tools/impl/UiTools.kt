@@ -343,7 +343,7 @@ class WaitTool : Tool(
 ) {
     override suspend fun execute(args: kotlinx.serialization.json.JsonObject, ctx: ToolContext): ToolResult {
         val ms = (T.int(args, "ms") ?: 800).coerceIn(100, 5000)
-        kotlinx.coroutines.delay(ms)
+        kotlinx.coroutines.delay(ms.toLong())
         return ToolResult.ok("Waited ${ms}ms.", Verification.VERIFIED)
     }
 }

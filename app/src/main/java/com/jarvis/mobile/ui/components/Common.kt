@@ -105,6 +105,7 @@ fun EmptyState(text: String) {
     }
 }
 
+@Composable
 fun stepColor(status: String): Color = when (status) {
     "SUCCESS" -> Ok
     "RUNNING" -> Accent

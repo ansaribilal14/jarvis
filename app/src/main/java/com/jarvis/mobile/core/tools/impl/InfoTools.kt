@@ -248,7 +248,7 @@ class OpenFileTool : Tool(
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val context = JarvisApp.instance
         val id = (T.int(args, "fileId") ?: T.dbl(args, "fileId")?.toInt()) ?: return ToolResult.fail("Missing required arg: fileId.")
-        val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+        val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id.toLong())
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "*/*")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -273,7 +273,7 @@ class ShareFileTool : Tool(
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val context = JarvisApp.instance
         val id = (T.int(args, "fileId") ?: T.dbl(args, "fileId")?.toInt()) ?: return ToolResult.fail("Missing required arg: fileId.")
-        val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+        val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id.toLong())
         val send = Intent(Intent.ACTION_SEND).apply {
             type = context.contentResolver.getType(uri) ?: "*/*"
             putExtra(Intent.EXTRA_STREAM, uri)
@@ -283,7 +283,13 @@ class ShareFileTool : Tool(
         val chooser = Intent.createChooser(send, "Share file").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return runCatching {
             context.startActivity(chooser)
-            ToolResult.ok("Share sheet opened with the file. Pick the target app and send.", Verification.UNVERIFIED, recoveryHint = "user-completes-send-in-app")
+            ToolResult(
+                com.jarvis.mobile.core.tools.ToolStatus.SUCCESS,
+                "Share sheet opened with the file. Pick the target app and send.",
+                Verification.UNVERIFIED,
+                null,
+                "user-completes-send-in-app",
+            )
         }.getOrElse { ToolResult.fail("Could not open share sheet for the file.") }
     }
 }

@@ -37,7 +37,7 @@ class ModelRouter(
         return when (d.route) {
             Route.LOCAL -> llama.generate(prompt, maxTokens) to d
             Route.REMOTE -> remote.generate(prompt, maxTokens) to d
-            Route.RULES -> Result.failure(IllegalStateException("no LLM route available")) to d
+            Route.RULES -> Result.failure<String>(IllegalStateException("no LLM route available")) to d
         }
     }
 

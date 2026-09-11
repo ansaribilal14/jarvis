@@ -5,8 +5,10 @@ import android.content.Intent
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.core.tools.Tool
 import com.jarvis.mobile.core.tools.ToolContext
@@ -180,7 +182,7 @@ class ControlBluetoothTool : Tool(
             )
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 return ToolResult(
                     com.jarvis.mobile.core.tools.ToolStatus.REQUIRES_CONFIRMATION,
                     "Grant the Nearby devices (Bluetooth) permission to JARVIS first.",
@@ -199,7 +201,4 @@ class ControlBluetoothTool : Tool(
             if (now == on) Verification.VERIFIED else Verification.UNVERIFIED,
         )
     }
-
-    private fun Context.checkSelfPermission(p: String): Int =
-        androidx.core.content.ContextCompat.checkSelfPermission(this, p)
 }

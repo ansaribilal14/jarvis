@@ -78,7 +78,7 @@ object DeterministicPlanner {
 }
 
 /** Facts block used in prompts (memory retrieval). */
-fun factsBlock(): String? {
+suspend fun factsBlock(): String? {
     val facts = runCatching {
         JarvisApp.instance.container.memory.factsSnapshot().take(10)
     }.getOrNull() ?: return null

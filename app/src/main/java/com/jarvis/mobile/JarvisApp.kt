@@ -71,12 +71,4 @@ class JarvisApp : Application() {
             },
         )
     }
-
-    companion object {
-        const val CH_AGENT = "agent"
-        const val CH_ALERTS = "alerts"
-
-        lateinit var instance: JarvisApp
-            private set
-    }
 }

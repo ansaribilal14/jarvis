@@ -27,8 +27,8 @@ class RemoteOpenAiProvider(
     private var model = ""
 
     suspend fun refreshConfig() {
-        baseUrl = settings.remoteBaseUrl.trim().trimEnd('/')
-        model = settings.remoteModel.trim()
+        baseUrl = settings.remoteBaseUrl.first().trim().trimEnd('/')
+        model = settings.remoteModel.first().trim()
     }
 
     override fun isReady(): Boolean = baseUrl.isNotBlank() && vault.remoteApiKey.isNotBlank()

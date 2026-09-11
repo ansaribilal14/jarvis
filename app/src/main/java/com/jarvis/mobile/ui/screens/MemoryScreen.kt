@@ -52,7 +52,7 @@ fun MemoryScreen() {
                 Text("Memory enabled", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 androidx.compose.material3.Switch(
                     checked = memoryEnabled,
-                    onCheckedChange = { container.settings.setMemoryEnabled(it) },
+                    onCheckedChange = { v -> scope.launch { container.settings.setMemoryEnabled(v) } },
                 )
             }
             Text(

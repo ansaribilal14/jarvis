@@ -64,10 +64,10 @@ class JarvisAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val pkg = e.packageName?.toString()
                 val cls = e.className?.toString()
-                scope.launch { windowEvents.emit(pkg to cls) }
+                _windowEvents.tryEmit(pkg to cls)
             }
             AccessibilityEvent.TYPE_TOUCH_INTERACTION_START -> {
-                scope.launch { userTouches.tryEmit(System.currentTimeMillis()) }
+                _userTouches.tryEmit(System.currentTimeMillis())
             }
         }
     }
@@ -225,7 +225,10 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     fun selectAllAndCopy(node: AccessibilityNodeInfo): Boolean {
         runCatching {
-            node.performAction(AccessibilityNodeInfo.ACTION_SELECT_ALL)
+            val args = android.os.Bundle()
+            args.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+            args.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, node.text?.length ?: 0)
+            node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
         }
         Thread.sleep(120)
         return runCatching { node.performAction(AccessibilityNodeInfo.ACTION_COPY) }.getOrDefault(false)
@@ -296,11 +299,11 @@ class JarvisAccessibilityService : AccessibilityService() {
                     android.view.Display.DEFAULT_DISPLAY,
                     java.util.concurrent.Executor { it.run() },
                     object : TakeScreenshotCallback {
-                        override fun onScreenshotResult(screenshotResult: ScreenshotResult) {
+                        override fun onSuccess(screenshotResult: ScreenshotResult) {
                             cont.resume(screenshotResult.toBitmapSafe())
                         }
 
-                        override fun onError(errorCode: Int) {
+                        override fun onFailure(errorCode: Int) {
                             Logx.w(TAG, "takeScreenshot error: $errorCode")
                             cont.resume(null)
                         }
@@ -316,7 +319,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     private fun android.accessibilityservice.AccessibilityService.ScreenshotResult.toBitmapSafe(): Bitmap? =
         runCatching {
             val hb = hardwareBuffer
-            val colorSpace = colorSpace ?: android.graphics.ColorSpace.get(android.graphics.ColorSpace.ColorSpaceName.SRGB)
+            val colorSpace = colorSpace ?: android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)
             val bmp = Bitmap.wrapHardwareBuffer(hb, colorSpace)
             val copy = bmp?.copy(Bitmap.Config.ARGB_8888, false)
             hb.close()
