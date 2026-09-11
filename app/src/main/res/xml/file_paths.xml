@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="models" path="models/" />
+    <files-path name="diagnostics" path="diagnostics/" />
+    <cache-path name="shared_cache" path="share/" />
+</paths>

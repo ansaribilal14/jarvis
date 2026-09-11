@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- JARVIS sentinel mark: broken outer arc + inner arc + core dot -->
+    <path
+        android:pathData="M54,26 A28,28 0 1 1 26.7,44.6"
+        android:strokeWidth="5.5"
+        android:strokeColor="#3FD8C2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,38 A16,16 0 1 0 70,46"
+        android:strokeWidth="4.5"
+        android:strokeColor="#2A9D8F"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,48 a6,6 0 1 1 0,12 a6,6 0 1 1 0,-12 z"
+        android:fillColor="#EAF4F2" />
+    <path
+        android:pathData="M26.7,44.6 L21,42.4 L24.2,37.2 Z"
+        android:fillColor="#3FD8C2" />
+</vector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JARVIS</string>
+    <string name="tile_label">Jarvis Voice</string>
+    <string name="accessibility_service_description">JARVIS uses Android Accessibility to observe the current screen (as structured text and elements) and to perform the actions you request: tapping, typing, scrolling and navigation. Screen content is processed on your device and is never uploaded by default. You can revoke this at any time in Settings → Accessibility.</string>
+    <string name="notification_channel_agent">Agent activity</string>
+    <string name="notification_channel_agent_desc">Shows what JARVIS is currently doing on your device, with a stop control.</string>
+    <string name="notification_channel_alerts">Alerts</string>
+    <string name="notification_channel_alerts_desc">Confirmations and important agent alerts.</string>
+    <string name="stop_agent">Stop</string>
+    <string name="agent_running">JARVIS is working</string>
+</resources>

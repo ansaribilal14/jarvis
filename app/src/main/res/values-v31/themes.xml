@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Jarvis" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/jarvis_bg_dark</item>
+        <item name="android:statusBarColor">@color/jarvis_bg_dark</item>
+        <item name="android:navigationBarColor">@color/jarvis_bg_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="Theme.Jarvis.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/jarvis_bg_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenBehavior">icon_preferred</item>
+        <item name="postSplashScreenTheme">@style/Theme.Jarvis</item>
+    </style>
+</resources>
