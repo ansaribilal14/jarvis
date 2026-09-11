@@ -200,14 +200,15 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
             if (g_cancel) break;
             if (llama_get_kv_cache_used_cells(g_ctx) >= n_ctx - 2) break;
 
-            const llama_token id = llama_sampler_sample(smpl, g_ctx, -1);
-            if (llama_token_is_eog(g_model, id)) break;
+            const llama_token sampled = llama_sampler_sample(smpl, g_ctx, -1);
+            if (llama_token_is_eog(g_model, sampled)) break;
 
-            const int n = llama_token_to_piece(g_model, id, buf, sizeof(buf), 0, true);
+            const int n = llama_token_to_piece(g_model, sampled, buf, sizeof(buf), 0, true);
             if (n < 0) break;
             out.append(buf, std::min(n, static_cast<int>(sizeof(buf))));
 
-            if (llama_decode(g_ctx, llama_batch_get_one(&id, 1)) != 0) break;
+            llama_token next = sampled; // batch API takes a mutable token pointer
+            if (llama_decode(g_ctx, llama_batch_get_one(&next, 1)) != 0) break;
         }
     }
     llama_sampler_free(smpl);
