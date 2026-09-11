@@ -87,8 +87,12 @@ object Planner {
         return if (s.length > 90) s.take(90) + "…" else s
     }
 
-    /** Parse the model output into a validated Decision (or a repair fallback). */
-    fun parseDecision(text: String): Decision {
+    /** Parse the model output into a validated Decision (or a repair fallback).
+     *  specFor is injectable so unit tests can validate parsing without the tool registry. */
+    fun parseDecision(
+        text: String,
+        specFor: (String) -> com.jarvis.mobile.core.tools.ToolSpec? = { t -> ToolRegistry.get(t)?.spec },
+    ): Decision {
         val obj = JsonX.firstJsonObject(text)
             ?: return Decision(null, text.trim().take(400), text) // plain prose fallback: treat as final response
         val actionObj: JsonObject? = JsonX.run { obj.obj("action") }
@@ -100,15 +104,17 @@ object Planner {
             if (tool.isNullOrBlank()) {
                 return Decision(null, response ?: "I could not decide on an action.", text)
             }
-            val spec = ToolRegistry.get(tool)?.spec
+            val spec = specFor(tool)
             if (spec == null) {
                 Logx.w("planner", "Model hallucinated tool '$tool'")
                 return Decision(null, "I attempted an invalid action and stopped for safety.", text)
             }
             // Argument validation: required params present?
-            val missing = spec.params.filter { it.required && JsonX.run { args.str(it.name) } == null &&
-                JsonX.run { args.int(it.name) } == null && JsonX.run { args.bool(it.name) } == null &&
-                JsonX.run { args.dbl(it.name) } == null }
+            val missing = spec.params.filter { p ->
+                p.required && JsonX.run { args.str(p.name) } == null &&
+                    JsonX.run { args.int(p.name) } == null && JsonX.run { args.bool(p.name) } == null &&
+                    JsonX.run { args.dbl(p.name) } == null
+            }
             if (missing.isNotEmpty()) {
                 Logx.w("planner", "Missing args for $tool: ${missing.joinToString { it.name }}")
                 return Decision(null, "I could not run \"${tool}\" - required arguments were missing.", text)
