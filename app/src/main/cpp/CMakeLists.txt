@@ -16,7 +16,6 @@ FetchContent_Declare(
     llamacpp
     URL https://github.com/ggml-org/llama.cpp/archive/refs/tags/b4458.tar.gz
     URL_HASH SHA256=62e698f1a34e851d448db0d85123bf6f1c3f6eec5a25e29ddc8a4a71aeda5230
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(llamacpp)
 
