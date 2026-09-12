@@ -48,11 +48,13 @@ object UiResolve {
 
 class TapTool : Tool(
     ToolSpec(
-        "tap", "Tap an on-screen element. Pass elementIdx from read_screen, or the visible text of the target.",
+        "tap", "Tap an on-screen element. Pass elementIdx from read_screen, or the visible text of the target. As a last resort pass exact screen coordinates x/y (only for targets you can see in the screen block).",
         listOf(
             com.jarvis.mobile.core.tools.ParamSpec("elementIdx", "int", false, "index from the last screen observation"),
             com.jarvis.mobile.core.tools.ParamSpec("text", "string", false, "visible text of the target"),
             com.jarvis.mobile.core.tools.ParamSpec("viewId", "string", false, "view id resource name"),
+            com.jarvis.mobile.core.tools.ParamSpec("x", "int", false, "last-resort: exact x coordinate of a visible target"),
+            com.jarvis.mobile.core.tools.ParamSpec("y", "int", false, "last-resort: exact y coordinate of a visible target"),
         ),
         com.jarvis.mobile.core.tools.Risk.LOW,
         needsAccessibility = true,
@@ -62,10 +64,29 @@ class TapTool : Tool(
         val svc = T.svc() ?: return ToolResult.unavailable("Accessibility service not connected. Enable it in system settings.", "guide-user-accessibility")
         val fresh = T.freshObserve() ?: return ToolResult.fail("Cannot read the screen right now.")
         val el = UiResolve.resolve(fresh, ctx.observation, T.int(args, "elementIdx"), T.str(args, "text"), T.str(args, "viewId"))
-            ?: return ToolResult.fail(
-                "Target not found on the current screen (${fresh.packageName}).",
-                "reobserve-or-scroll",
-            )
+            ?: run {
+                // Coordinate last resort (MobileAgent-style): the model must cite a
+                // point it actually saw; we clamp to the visible screen.
+                val x = T.int(args, "x")
+                val y = T.int(args, "y")
+                if (x == null || y == null) return ToolResult.fail(
+                    "Target not found on the current screen (${fresh.packageName}). Scroll or re-read the screen.",
+                    "reobserve-or-scroll",
+                )
+                val m = svc.resources.displayMetrics
+                val cx = x.coerceIn(0, m.widthPixels - 1)
+                val cy = y.coerceIn(0, m.heightPixels - 1)
+                val ok = svc.tapAt(cx, cy)
+                return if (ok) {
+                    val changed = T.awaitWindowChange(2500) != null
+                    ToolResult(
+                        com.jarvis.mobile.core.tools.ToolStatus.SUCCESS,
+                        "Tapped at ($cx,$cy) by coordinates.",
+                        if (changed) Verification.VERIFIED else Verification.UNVERIFIED,
+                        detail = "pkg=${fresh.packageName}",
+                    )
+                } else ToolResult.fail("Could not dispatch tap gesture at ($cx,$cy).")
+            }
         if (el.isPassword) return ToolResult.blocked("Target is a protected password field - JARVIS will not interact with it.", "password-policy")
         val node = svc.resolveNode(el) ?: run {
             // Coordinate fallback (controlled, verified): bounds are still current from `fresh`.
@@ -89,6 +110,43 @@ class TapTool : Tool(
             if (changed) Verification.VERIFIED else Verification.UNVERIFIED,
             detail = "pkg=${fresh.packageName}",
         )
+    }
+}
+
+class DoubleTapTool : Tool(
+    ToolSpec(
+        "double_tap", "Double-tap a point on screen. This is the LIKE gesture in Instagram/YouTube/Facebook feeds and reels.",
+        listOf(
+            com.jarvis.mobile.core.tools.ParamSpec("elementIdx", "int", false, "index from read_screen (e.g. the video/image element)"),
+            com.jarvis.mobile.core.tools.ParamSpec("text", "string", false, "visible text of the target"),
+            com.jarvis.mobile.core.tools.ParamSpec("x", "int", false, "exact x of a visible target (e.g. center of the video)"),
+            com.jarvis.mobile.core.tools.ParamSpec("y", "int", false, "exact y of a visible target"),
+        ),
+        com.jarvis.mobile.core.tools.Risk.LOW,
+        needsAccessibility = true,
+    ),
+) {
+    override suspend fun execute(args: kotlinx.serialization.json.JsonObject, ctx: ToolContext): ToolResult {
+        val svc = T.svc() ?: return ToolResult.unavailable("Accessibility service not connected.")
+        val fresh = T.freshObserve()
+        val el = fresh?.let { o -> UiResolve.resolve(o, ctx.observation, T.int(args, "elementIdx"), T.str(args, "text"), null) }
+        val (x, y, what) = if (el != null) {
+            Triple(el.centerX, el.centerY, "\"${el.label()}\"")
+        } else {
+            val px = T.int(args, "x")
+            val py = T.int(args, "y")
+            if (px == null || py == null) {
+                // Default: center of the visible content area (feeds put the media there).
+                val m = svc.resources.displayMetrics
+                Triple(m.widthPixels / 2, (m.heightPixels * 0.42).toInt(), "screen center (no target given)")
+            } else {
+                val m = svc.resources.displayMetrics
+                Triple(px.coerceIn(0, m.widthPixels - 1), py.coerceIn(0, m.heightPixels - 1), "($px,$py)")
+            }
+        }
+        val ok = svc.doubleTapAt(x, y)
+        return if (ok) ToolResult.ok("Double-tapped $what at ($x,$y) - like gesture sent.", Verification.UNVERIFIED)
+        else ToolResult.fail("Could not dispatch double-tap gesture.")
     }
 }
 
@@ -137,11 +195,31 @@ class TypeTextTool : Tool(
         }
         if (looksOtp) return ToolResult.blocked("Refusing to type into an OTP/verification field (safety policy).", "otp-policy")
 
-        val node = svc.resolveNode(field) ?: run {
-            val focused = runCatching { svc.rootInActiveWindow?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT) }.getOrNull()
-            focused ?: return ToolResult.fail("Field is gone from the screen.", "reobserve")
+        fun policyCheck(el: ScreenElement): ToolResult? {
+            if (el.isPassword) return ToolResult.blocked("Refusing to type into a password field (safety policy).", "password-policy")
+            val otp = listOf("otp", "one time", "verification code", "confirm code").any {
+                (el.text ?: "").contains(it, true) || (el.desc ?: "").contains(it, true) || (el.viewId ?: "").contains(it, true)
+            }
+            return if (otp) ToolResult.blocked("Refusing to type into an OTP/verification field (safety policy).", "otp-policy") else null
         }
-        val ok = svc.performSetText(node, text)
+        policyCheck(field)?.let { return it }
+
+        val node = svc.resolveNode(field)
+        var ok = node?.let { svc.performSetText(it, text) } == true
+        // Custom editors (Instagram, Snapchat) often reject ACTION_SET_TEXT on an
+        // untapped field. Tap the field first, then set text on the focused editor.
+        if (!ok) {
+            svc.tapAt(field.centerX, field.centerY)
+            T.settle(420)
+            val focused = runCatching {
+                svc.rootInActiveWindow?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+            }.getOrNull()
+            if (focused != null) {
+                val fe = fresh.elements.firstOrNull { it.editable && it.isPassword }
+                if (fe != null) return ToolResult.blocked("Refusing to type into a password field (safety policy).", "password-policy")
+                ok = svc.performSetText(focused, text)
+            }
+        }
         if (!ok) return ToolResult.fail(
             "Field did not accept direct text entry (app may use a custom editor).",
             "tap-field-then-retry",

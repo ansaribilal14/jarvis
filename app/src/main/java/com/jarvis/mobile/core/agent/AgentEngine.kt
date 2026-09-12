@@ -14,6 +14,7 @@ import com.jarvis.mobile.core.tools.ToolContext
 import com.jarvis.mobile.core.tools.ToolRegistry
 import com.jarvis.mobile.core.tools.ToolResult
 import com.jarvis.mobile.core.tools.ToolStatus
+import com.jarvis.mobile.core.tools.Verification
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -173,10 +174,20 @@ object AgentEngine {
         synchronized(stateLock) { taskEvents.clear() }
         val taskId = c.memory.startTask(goal, source)
         c.memory.addChat("USER", goal, taskId)
-        val maxActions = runCatching { c.settings.maxActions.first() }.getOrDefault(12)
+        val rawMax = runCatching { c.settings.maxActions.first() }.getOrDefault(12)
+        val unlimited = rawMax <= 0 // 0 (or negative) = unlimited; loop guards still protect the user
+        val maxActions = if (unlimited) Int.MAX_VALUE else rawMax
+        val budgetLabel = if (unlimited) "unlimited" else "max $rawMax"
         var actionsUsed = 0
         val history = mutableListOf<Pair<PlannedAction, String>>()
         val steps = mutableListOf<StepUi>()
+
+        // Anti-repeat / anti-stuck state (v1.3).
+        var lastSig: String? = null
+        var repeatCount = 0
+        var consecFails = 0
+        var interpFails = 0
+        var afterNote: String? = null
 
         fun update(f: (AgentUiState) -> AgentUiState) {
             synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList()) }
@@ -212,14 +223,14 @@ object AgentEngine {
         update {
             it.copy(
                 status = AgentStatus.THINKING, goal = goal, finalResponse = null, route = "…",
-                startedAtMs = startMs, elapsedMs = 0, stepIndex = 0, stepBudget = maxActions,
+                startedAtMs = startMs, elapsedMs = 0, stepIndex = 0, stepBudget = if (unlimited) -1 else rawMax,
                 thinkingDetail = null, events = emptyList(),
             )
         }
-        event("Task received: \"$goal\"", "ok")
+        event("Task received: \"$goal\" (actions: $budgetLabel)", "ok")
         com.jarvis.mobile.service.AgentForegroundService.start("Working on: $goal")
         c.voiceOutput.speak("Working on it.")
-        Logx.i(TAG, "Task start: \"$goal\" (source=$source, budget=$maxActions)")
+        Logx.i(TAG, "Task start: \"$goal\" (source=$source, actions=$budgetLabel)")
 
         try {
             var finalResponse: String? = null
@@ -248,8 +259,28 @@ object AgentEngine {
 
                 // 2. DECIDE --------------------------------------------------
                 event("Thinking about the next move…")
-                val decision = decide(goal, screen, history, suspicion)
+                val stepWarnings = buildList {
+                    if (interpFails >= 1) add("Your previous output was NOT a valid action JSON. Respond with EXACTLY ONE JSON object per the OUTPUT CONTRACT - no prose, no markdown.")
+                    if (repeatCount >= 1) add("You already tried this exact action ${repeatCount + 1} time(s) and it did not work. Choose a DIFFERENT approach or finish honestly.")
+                    if (consecFails >= 2) add("$consecFails actions in a row failed. Re-read the <screen> block carefully and change strategy.")
+                }
+                val decision = decide(goal, screen, history, suspicion, actionsUsed, budgetLabel, stepWarnings, afterNote)
                 update { it.copy(route = decision.routeName) }
+
+                // Unparseable model output: retry instead of dying (small local models do this).
+                if (decision.action == null && decision.response == null) {
+                    interpFails++
+                    event("Model output was not a valid action - retrying ($interpFails/3)", "warn")
+                    if (interpFails >= 3) {
+                        finalResponse = "I could not produce a valid action plan from the model output after $interpFails attempts. " +
+                            "For multi-step app tasks a larger model (or a remote provider in Settings) works better."
+                        event("Giving up: repeated invalid model output", "err")
+                        break
+                    }
+                    delay(400)
+                    continue
+                }
+                interpFails = 0
 
                 if (decision.action == null) {
                     event("Final answer ready", "ok")
@@ -258,12 +289,25 @@ object AgentEngine {
                 }
                 val action = decision.action
                 event("Planned: ${action.tool}", "model")
+
+                // Loop guard: identical action (tool + args) repeated = the model is guessing.
+                val sig = action.tool + ":" + action.args.toString()
+                if (sig == lastSig) repeatCount++ else { repeatCount = 0; lastSig = sig }
+                if (repeatCount >= 3) {
+                    finalResponse = "I repeated the same action (\"${action.tool}\") ${repeatCount + 1} times without progress, " +
+                        "so I stopped to avoid looping forever. Last result: ${history.lastOrNull()?.second?.take(140) ?: "none"}."
+                    event("Loop guard: same action kept repeating - stopped honestly", "err")
+                    break
+                }
+                if (repeatCount >= 1) event("Repeat guard: same action as last step (attempt ${repeatCount + 1})", "warn")
+
                 val tool = ToolRegistry.get(action.tool)
                 if (tool == null || !tool.available()) {
                     finalResponse = "The action \"${action.tool}\" is not available right now (missing permission or service)."
                     history.add(action to "BLOCKED: tool unavailable")
                     steps.add(StepUi(steps.size + 1, action.tool, action.tool, "BLOCKED"))
                     event("\"${action.tool}\" unavailable - blocked", "err")
+                    consecFails++
                     continue
                 }
 
@@ -336,6 +380,16 @@ object AgentEngine {
                 c.memory.addStep(taskId, steps.size, action.tool, action.args.toString(), steps.last().status, result.message, verdict)
                 history.add(action to verdict)
 
+                // Honest failure accounting + fresh eyes for the next decision.
+                if (result.status == ToolStatus.SUCCESS && result.verified != Verification.FAILED) consecFails = 0 else consecFails++
+                if (consecFails >= 5) {
+                    finalResponse = "Five actions in a row did not work (last: ${result.message.take(120)}). " +
+                        "I stopped instead of guessing. The screen currently shows: ${screen?.packageName ?: "unknown app"}."
+                    event("Giving up: 5 consecutive failures", "err")
+                    break
+                }
+                afterNote = runCatching { Verifier.observeAfter() }.getOrNull()
+
                 // 6. ADAPT ---------------------------------------------------
                 if (result.status != ToolStatus.SUCCESS) {
                     Logx.w(TAG, "Step failed (${action.tool}): ${result.message.take(120)} → replanning")
@@ -346,7 +400,7 @@ object AgentEngine {
                 }
             }
 
-            if (finalResponse == null && actionsUsed >= maxActions) {
+            if (finalResponse == null && !unlimited && actionsUsed >= maxActions) {
                 finalResponse = "I used my action budget ($maxActions actions) without completing the task. Stopped safely."
                 event("Action budget exhausted - stopping safely", "warn")
             }
@@ -368,6 +422,7 @@ object AgentEngine {
         val action: PlannedAction?,
         val response: String?,
         val routeName: String,
+        val warnings: List<String> = emptyList(),
     )
 
     private suspend fun decide(
@@ -375,23 +430,32 @@ object AgentEngine {
         screen: ScreenObservation?,
         history: List<Pair<PlannedAction, String>>,
         suspicion: InjectionGuard.Verdict,
+        actionsUsed: Int,
+        budgetLabel: String,
+        extraWarnings: List<String>,
+        afterNote: String?,
     ): RoutedDecision {
-        val snap = c.settings.snapshot()
         val route = router.decide()
         updateRoute(route.route.name)
         event("Route: ${route.route.name.lowercase()} (${route.reason.take(70)})")
-        val res = when (route.route) {
+        return when (route.route) {
             ModelRouter.Route.RULES -> {
                 val d = DeterministicPlanner.decide(goal, screen)
                 RoutedDecision(d.action, d.response, route.route.name)
             }
             else -> {
                 val system = Planner.systemPrompt(suspicion, factsBlock())
-                val user = Planner.userPrompt(goal, screen, history, route.reason)
+                val user = Planner.userPrompt(
+                    goal, screen, history, route.reason,
+                    actionsUsed = actionsUsed,
+                    budgetLabel = budgetLabel,
+                    warnings = extraWarnings,
+                    afterNote = afterNote,
+                )
                 val template = c.modelManager.llama.activeModel?.template
                     ?: com.jarvis.mobile.core.model.ModelCatalog.ChatTemplate.CHATML
                 val prompt = com.jarvis.mobile.core.model.PromptTemplates.render(template, system, user)
-                val (result, _) = router.generate(prompt, maxTokens = 220)
+                val (result, _) = router.generate(prompt, maxTokens = 300)
                 // Honest timing stats for the live feed (local route fills genState).
                 val g = c.modelManager.llama.genState.value
                 if (route.route == ModelRouter.Route.LOCAL && g.outTokens > 0) {
@@ -400,10 +464,20 @@ object AgentEngine {
                 result.fold(
                     onSuccess = { text ->
                         val parsed = Planner.parseDecision(text)
-                        if (parsed.action == null && parsed.response.isNullOrBlank()) {
-                            RoutedDecision(null, "I could not interpret the model output.", route.route.name)
-                        } else {
-                            RoutedDecision(parsed.action, parsed.response, route.route.name)
+                        when {
+                            parsed.action != null -> RoutedDecision(parsed.action, null, route.route.name)
+                            // A deliberate final answer: the JSON carried a "response" key.
+                            hasResponseKey(parsed.raw) ->
+                                RoutedDecision(null, parsed.response?.takeIf { it.isNotBlank() } ?: "Task finished.", route.route.name)
+                            // Prose, hallucinated tool, missing args, or garbage → retryable, not fatal.
+                            else -> RoutedDecision(
+                                null, null, route.route.name,
+                                listOf(
+                                    "Your previous output was NOT a valid action. Respond with EXACTLY ONE JSON object: " +
+                                        "{\"thought\":\"...\",\"action\":{\"tool\":\"<name>\",\"args\":{...}}} using ONLY tools " +
+                                        "from AVAILABLE TOOLS with all their required arguments - no prose, no markdown.",
+                                ),
+                            )
                         }
                     },
                     onFailure = { t ->
@@ -415,8 +489,11 @@ object AgentEngine {
                 )
             }
         }
-        return res
     }
+
+    /** True when the model's raw output JSON explicitly chose the final-"response" form. */
+    private fun hasResponseKey(raw: String): Boolean =
+        runCatching { com.jarvis.mobile.util.JsonX.firstJsonObject(raw)?.containsKey("response") }.getOrDefault(false) == true
 
     private suspend fun finish(taskId: Long, goal: String, source: String, response: String?, actionsUsed: Int) {
         val honest = response ?: "Task finished."

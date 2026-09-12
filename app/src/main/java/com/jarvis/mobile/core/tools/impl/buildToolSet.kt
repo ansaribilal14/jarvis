@@ -15,6 +15,7 @@ fun buildToolSet(container: JarvisApp.Container): List<Tool> = listOf(
     ListAppsTool(),
     // Screen interaction
     TapTool(),
+    DoubleTapTool(),
     LongPressTool(),
     TypeTextTool(),
     ClearTextTool(),

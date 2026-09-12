@@ -258,6 +258,18 @@ class JarvisAccessibilityService : AccessibilityService() {
         return runCatching { dispatchGesture(d, null, null) }.getOrDefault(false)
     }
 
+    /**
+     * Double-tap at coordinates in ONE dispatched gesture (two strokes) - used to
+     * like posts/videos in apps where double-tap is the like gesture.
+     */
+    fun doubleTapAt(x: Int, y: Int): Boolean {
+        val path = android.graphics.Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val first = GestureDescription.StrokeDescription(path, 0, 60)
+        val second = GestureDescription.StrokeDescription(path, 170, 60)
+        val gesture = GestureDescription.Builder().addStroke(first).addStroke(second).build()
+        return runCatching { dispatchGesture(gesture, null, null) }.getOrDefault(false)
+    }
+
     fun longPressAt(x: Int, y: Int): Boolean {
         val d = gesturePath(x.toFloat(), y.toFloat(), x.toFloat(), y.toFloat(), 620)
         return runCatching { dispatchGesture(d, null, null) }.getOrDefault(false)

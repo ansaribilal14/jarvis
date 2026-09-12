@@ -170,8 +170,9 @@ fun HomeScreen(openTab: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 StatusChip(fmtElapsed(agentState.elapsedMs), ChipState.ACCENT)
-                if (agentState.stepBudget > 0) {
-                    StatusChip("Step ${agentState.stepIndex}/${agentState.stepBudget}", ChipState.NEUTRAL)
+                when {
+                    agentState.stepBudget > 0 -> StatusChip("Step ${agentState.stepIndex}/${agentState.stepBudget}", ChipState.NEUTRAL)
+                    agentState.stepBudget < 0 -> StatusChip("Step ${agentState.stepIndex} · unlimited", ChipState.NEUTRAL)
                 }
             }
             agentState.thinkingDetail?.let { detail ->

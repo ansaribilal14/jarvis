@@ -172,11 +172,20 @@ fun SettingsScreen() {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text("Max actions per task", Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(6, 12, 20).forEach { v ->
-                        FilterChip(selected = maxActions == v, onClick = { scope.launch { s.setMaxActions(v) } }, label = { Text("$v") })
+                    listOf(6, 12, 20, 0).forEach { v ->
+                        FilterChip(
+                            selected = maxActions == v,
+                            onClick = { scope.launch { s.setMaxActions(v) } },
+                            label = { Text(if (v == 0) "∞" else "$v") },
+                        )
                     }
                 }
             }
+            Text(
+                "0 (∞) = unlimited actions. Loop and failure guards still stop runaway tasks honestly.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         SectionCard("Floating bubble") {
