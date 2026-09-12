@@ -35,6 +35,8 @@ class SettingsRepository(private val context: Context) {
         val ONBOARDED = booleanPreferencesKey("onboarded")
         val REMOTE_BASE_URL = stringPreferencesKey("remote_base_url")
         val REMOTE_MODEL = stringPreferencesKey("remote_model")
+        val API_MODE = booleanPreferencesKey("api_mode")
+        val NIM_MODEL = stringPreferencesKey("nim_model")
         val SCREEN_COMPACT = booleanPreferencesKey("screen_compact")
         val TELEGRAM_REMOTE_ENABLED = booleanPreferencesKey("telegram_remote_enabled")
         val TELEGRAM_CHAT_ID = stringPreferencesKey("telegram_chat_id")
@@ -59,6 +61,8 @@ class SettingsRepository(private val context: Context) {
     val onboarded: Flow<Boolean> = d.map { it[Keys.ONBOARDED] ?: false }
     val remoteBaseUrl: Flow<String> = d.map { it[Keys.REMOTE_BASE_URL] ?: "" }
     val remoteModel: Flow<String> = d.map { it[Keys.REMOTE_MODEL] ?: "" }
+    val apiMode: Flow<Boolean> = d.map { it[Keys.API_MODE] ?: false }
+    val nimModel: Flow<String> = d.map { it[Keys.NIM_MODEL] ?: "meta/llama-3.1-8b-instruct" }
     val screenCompact: Flow<Boolean> = d.map { it[Keys.SCREEN_COMPACT] ?: true }
     val telegramRemoteEnabled: Flow<Boolean> = d.map { it[Keys.TELEGRAM_REMOTE_ENABLED] ?: false }
     val telegramChatId: Flow<String> = d.map { it[Keys.TELEGRAM_CHAT_ID] ?: "" }
@@ -78,6 +82,7 @@ class SettingsRepository(private val context: Context) {
         unloadIdleMin = unloadIdleMin.first(),
         remoteBaseUrl = remoteBaseUrl.first(),
         remoteModel = remoteModel.first(),
+        apiMode = apiMode.first(),
         screenCompact = screenCompact.first(),
     )
 
@@ -95,6 +100,7 @@ class SettingsRepository(private val context: Context) {
         val unloadIdleMin: Int,
         val remoteBaseUrl: String,
         val remoteModel: String,
+        val apiMode: Boolean,
         val screenCompact: Boolean,
     )
 
@@ -116,6 +122,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setOnboarded(v: Boolean) = set(Keys.ONBOARDED, v)
     suspend fun setRemoteBaseUrl(v: String) = set(Keys.REMOTE_BASE_URL, v)
     suspend fun setRemoteModel(v: String) = set(Keys.REMOTE_MODEL, v)
+    suspend fun setApiMode(v: Boolean) = set(Keys.API_MODE, v)
+    suspend fun setNimModel(v: String) = set(Keys.NIM_MODEL, v)
     suspend fun setScreenCompact(v: Boolean) = set(Keys.SCREEN_COMPACT, v)
     suspend fun setTelegramRemoteEnabled(v: Boolean) = set(Keys.TELEGRAM_REMOTE_ENABLED, v)
     suspend fun setTelegramChatId(v: String) = set(Keys.TELEGRAM_CHAT_ID, v)

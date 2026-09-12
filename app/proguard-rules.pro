@@ -1,6 +1,14 @@
 # JARVIS ProGuard rules
 # JNI bridge is resolved by name from native code - keep everything.
 -keep class com.jarvis.mobile.core.model.LlamaBridge { *; }
+# The progress callback interface is a nested fun interface implemented by
+# lambdas elsewhere - R8 renaming it breaks the native GetMethodID lookup
+# ("no non-static method ...onProgress(IIII[B)V"). Keep the whole model
+# package unobfuscated: it is the JNI boundary.
+-keep class com.jarvis.mobile.core.model.** { *; }
+-keepclassmembers class com.jarvis.mobile.** {
+    void onProgress(int,int,int,int,byte[]);
+}
 
 # Accessibility service keeps references via reflection-free code but be safe.
 -keep class com.jarvis.mobile.accessibility.** { *; }

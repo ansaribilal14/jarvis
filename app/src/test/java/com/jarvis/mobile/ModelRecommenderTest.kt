@@ -25,7 +25,13 @@ class ModelRecommenderTest {
     @Test
     fun `basic device gets smallest model`() {
         val rec = ModelCatalog.recommendFor(profile(2.0))
-        assertEquals("qwen25-05b", rec.id)
+        assertEquals("smollm2-360m", rec.id)
+    }
+
+    @Test
+    fun `low ram device gets the 1b speed sweet spot`() {
+        val rec = ModelCatalog.recommendFor(profile(4.0))
+        assertEquals("llama32-1b", rec.id)
     }
 
     @Test

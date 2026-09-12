@@ -21,12 +21,22 @@ class ModelRouter(
 
     suspend fun decide(): Decision {
         val snap = settings.snapshot()
+        // API mode (e.g. NVIDIA NIM free models) takes priority: the user
+        // explicitly turned it on, so never fall back to a slower local path
+        // or ask them to activate a local model first.
+        if (snap.apiMode) {
+            remote.refreshConfig()
+            if (remote.isReady()) {
+                return Decision(Route.REMOTE, "API mode: ${snap.remoteModel.ifBlank { "remote" }}")
+            }
+        }
         return when {
             llama.isReady() -> Decision(Route.LOCAL, "on-device model: ${llama.activeModel?.id}")
             snap.localOnly -> Decision(Route.RULES, "LOCAL ONLY mode - no cloud, model not loaded; using deterministic engine")
             else -> {
                 remote.refreshConfig()
                 if (remote.isReady()) Decision(Route.REMOTE, "remote provider configured")
+                else if (snap.apiMode) Decision(Route.RULES, "API mode is on but no key/endpoint is set; using deterministic engine")
                 else Decision(Route.RULES, "no model loaded and no remote provider; using deterministic engine")
             }
         }

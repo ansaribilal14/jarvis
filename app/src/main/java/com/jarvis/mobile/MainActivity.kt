@@ -86,43 +86,58 @@ private fun App(onboarded: Boolean) {
 
     val tabs = listOf(Dest.Home, Dest.Models, Dest.History, Dest.Memory, Dest.Routines, Dest.Doctor, Dest.Settings)
 
+    // API-mode sidebar (NVIDIA NIM): openable from Home / Models via ApiDrawerBus.
+    val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
+    val drawerOpen by com.jarvis.mobile.ui.components.ApiDrawerBus.open.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(drawerOpen) {
+        if (drawerOpen) {
+            drawerState.open()
+            com.jarvis.mobile.ui.components.ApiDrawerBus.open.value = false
+        }
+    }
+
     androidx.compose.runtime.LaunchedEffect(overlayEnabled) {
         val ctx = JarvisApp.instance
         if (overlayEnabled) OverlayService.start(ctx) else OverlayService.stop(ctx)
     }
 
-    Scaffold(
-        bottomBar = {
-            if (current != Dest.Onboarding.route && current != "about") {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    tabs.forEach { d ->
-                        NavigationBarItem(
-                            selected = current == d.route,
-                            onClick = { nav.navigate(d.route) { launchSingleTop = true; popUpTo(Dest.Home.route) { saveState = true } } },
-                            icon = { d.icon?.let { Icon(it, contentDescription = d.label) } },
-                            label = { Text(d.label, style = MaterialTheme.typography.labelMedium) },
-                        )
+    androidx.compose.material3.ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = { com.jarvis.mobile.ui.components.ApiDrawerSheet() },
+    ) {
+        Scaffold(
+            bottomBar = {
+                if (current != Dest.Onboarding.route && current != "about") {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        tabs.forEach { d ->
+                            NavigationBarItem(
+                                selected = current == d.route,
+                                onClick = { nav.navigate(d.route) { launchSingleTop = true; popUpTo(Dest.Home.route) { saveState = true } } },
+                                icon = { d.icon?.let { Icon(it, contentDescription = d.label) } },
+                                label = { Text(d.label, style = MaterialTheme.typography.labelMedium) },
+                            )
+                        }
                     }
                 }
+            },
+        ) { padding ->
+            NavHost(
+                navController = nav,
+                startDestination = if (onboarded) Dest.Home.route else Dest.Onboarding.route,
+                modifier = Modifier
+                    .padding(padding)
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
+                composable(Dest.Home.route) { HomeScreen(openTab = { r -> nav.navigate(r) { launchSingleTop = true } }) }
+                composable(Dest.Onboarding.route) { OnboardingScreen(onDone = { nav.navigate(Dest.Home.route) { popUpTo(0) } }) }
+                composable(Dest.Models.route) { ModelsScreen() }
+                composable(Dest.History.route) { HistoryScreen() }
+                composable(Dest.Memory.route) { MemoryScreen() }
+                composable(Dest.Routines.route) { RoutinesScreen() }
+                composable(Dest.Doctor.route) { DoctorScreen() }
+                composable(Dest.Settings.route) { SettingsScreen() }
+                composable("about") { AboutScreen() }
             }
-        },
-    ) { padding ->
-        NavHost(
-            navController = nav,
-            startDestination = if (onboarded) Dest.Home.route else Dest.Onboarding.route,
-            modifier = Modifier
-                .padding(padding)
-                .background(MaterialTheme.colorScheme.background),
-        ) {
-            composable(Dest.Home.route) { HomeScreen(openTab = { r -> nav.navigate(r) { launchSingleTop = true } }) }
-            composable(Dest.Onboarding.route) { OnboardingScreen(onDone = { nav.navigate(Dest.Home.route) { popUpTo(0) } }) }
-            composable(Dest.Models.route) { ModelsScreen() }
-            composable(Dest.History.route) { HistoryScreen() }
-            composable(Dest.Memory.route) { MemoryScreen() }
-            composable(Dest.Routines.route) { RoutinesScreen() }
-            composable(Dest.Doctor.route) { DoctorScreen() }
-            composable(Dest.Settings.route) { SettingsScreen() }
-            composable("about") { AboutScreen() }
         }
     }
 }

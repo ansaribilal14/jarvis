@@ -29,6 +29,7 @@
 
 #define LOG_TAG "jarvis-llama"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
@@ -152,6 +153,14 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
         jclass cls = env->GetObjectClass(listener);
         if (cls != nullptr) {
             on_progress = env->GetMethodID(cls, "onProgress", "(IIII[B)V");
+            if (env->ExceptionCheck()) {
+                // Lookup failed (e.g. minified callback): progress is OPTIONAL.
+                // Clear the pending exception and keep generating - the result
+                // must never be thrown away over a UI callback.
+                env->ExceptionClear();
+                on_progress = nullptr;
+                LOGW("progress listener not resolvable - continuing without streaming");
+            }
             env->DeleteLocalRef(cls);
         }
     }

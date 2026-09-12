@@ -99,6 +99,10 @@ fun ModelsScreen() {
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        TextButton(onClick = { com.jarvis.mobile.ui.components.ApiDrawerBus.requestOpen() }) {
+            Text("⚡ API mode — use free NVIDIA NIM cloud models", color = Accent)
+        }
+
         SectionCard("This device — ${profile.deviceClass.name}") {
             Text("${profile.model} · Android ${profile.androidVersion} · ${profile.cores} cores", style = MaterialTheme.typography.bodyMedium)
             Text("${profile.totalRamGb} GB RAM (${profile.availRamGb} GB free) · ${profile.storageFreeGb} GB storage free", style = MaterialTheme.typography.bodyMedium)

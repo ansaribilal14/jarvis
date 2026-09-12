@@ -6,12 +6,15 @@ import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * OPTIONAL remote accelerator (OpenAI-compatible /chat/completions).
+ * OPTIONAL remote accelerator (OpenAI-compatible).
+ * - Classic custom endpoints use legacy /completions.
+ * - API mode (NVIDIA NIM and any /v1 endpoint) uses /chat/completions.
  * Disabled by default and blocked entirely while LOCAL ONLY mode is on.
  */
 class RemoteOpenAiProvider(
@@ -33,22 +36,43 @@ class RemoteOpenAiProvider(
 
     override fun isReady(): Boolean = baseUrl.isNotBlank() && vault.remoteApiKey.isNotBlank()
 
+    /** One-shot key/endpoint check used by the API-mode sidebar ("Test key"). */
+    suspend fun verifyKey(): Result<String> = withContext(Dispatchers.IO) {
+        refreshConfig()
+        if (!isReady()) return@withContext Result.failure(IllegalStateException("Paste an API key first"))
+        generate("Reply with exactly: OK", 8).mapCatching { it.ifBlank { "empty reply" } }
+    }
+
     override suspend fun generate(prompt: String, maxTokens: Int): Result<String> = withContext(Dispatchers.IO) {
         if (settings.localOnly.first()) {
             return@withContext Result.failure(IllegalStateException("LOCAL ONLY mode is enabled - remote inference blocked"))
         }
+        refreshConfig()
         if (!isReady()) return@withContext Result.failure(IllegalStateException("Remote provider not configured"))
+        // /v1-style endpoints (NVIDIA NIM, OpenAI) speak chat/completions;
+        // bare custom endpoints keep the legacy /completions shape.
+        val chat = settings.apiMode.first() || baseUrl.endsWith("/v1")
         try {
-            val body = JSONObject().apply {
-                put("model", model.ifBlank { "default" })
-                put("prompt", prompt)
-                put("max_tokens", maxTokens)
-                put("temperature", 0.25)
+            val body = if (chat) {
+                JSONObject().apply {
+                    put("model", model.ifBlank { "meta/llama-3.1-8b-instruct" })
+                    put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
+                    put("max_tokens", maxTokens)
+                    put("temperature", 0.25)
+                }
+            } else {
+                JSONObject().apply {
+                    put("model", model.ifBlank { "default" })
+                    put("prompt", prompt)
+                    put("max_tokens", maxTokens)
+                    put("temperature", 0.25)
+                }
             }
-            val conn = URL("$baseUrl/completions").openConnection() as HttpURLConnection
+            val path = if (chat) "/chat/completions" else "/completions"
+            val conn = URL("$baseUrl$path").openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.connectTimeout = 8000
-            conn.readTimeout = 60000
+            conn.readTimeout = if (chat) 120_000 else 60_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer ${vault.remoteApiKey}")
@@ -58,9 +82,8 @@ class RemoteOpenAiProvider(
             if (code !in 200..299) return@withContext Result.failure(IllegalStateException("Remote error $code: ${text.take(140)}"))
             val json = JSONObject(text)
             val choice = json.getJSONArray("choices").getJSONObject(0)
-            val out = choice.optString("text", "").ifBlank {
-                choice.optJSONObject("message")?.optString("content", "") ?: ""
-            }
+            val out = choice.optJSONObject("message")?.optString("content", "").orEmpty()
+                .ifBlank { choice.optString("text", "").ifBlank { choice.optString("content", "") } }
             Result.success(out)
         } catch (t: Throwable) {
             Logx.w("remote", "Remote generation failed: ${t.message}")

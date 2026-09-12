@@ -147,7 +147,11 @@ class ModelManager(
                     return@withLock false
                 }
                 val snap = settings.snapshot()
-                val ok = llama.load(m, file, snap.contextSize.coerceAtMost(4096), snap.inferenceThreads)
+                // threads=0 means auto: prefer PHYSICAL performance cores over
+                // hardware_concurrency() - scheduling across big.LITTLE (LITTLE
+                // cores) measurably slows decode on virtually all phones.
+                val threads = snap.inferenceThreads.takeIf { it > 0 } ?: detectPerfCores()
+                val ok = llama.load(m, file, snap.contextSize.coerceAtMost(4096), threads)
                 if (ok) {
                     settings.setActiveModelId(m.id)
                     lastGenerationAt = System.currentTimeMillis()
@@ -332,6 +336,26 @@ class ModelManager(
             if (c.moveToFirst()) c.getString(0) else null
         }
     }.getOrNull()
+
+    /**
+     * Best-effort count of PHYSICAL performance cores (big.LITTLE aware):
+     * reads cpufreq max frequencies from sysfs and counts cores running at
+     * >=85% of the fastest core. Falls back to 4 (typical prime+big cluster)
+     * when sysfs is unavailable. Using only fast cores keeps decode tokens/sec
+     * high - LITTLE cores add scheduling overhead without adding throughput.
+     */
+    private fun detectPerfCores(): Int = runCatching {
+        val cpuDir = java.io.File("/sys/devices/system/cpu")
+        val freqs = cpuDir.listFiles { f -> f.name.startsWith("cpu") && f.name.length > 3 && f.name[3].isDigit() }
+            ?.mapNotNull { cpu ->
+                runCatching {
+                    java.io.File(cpu, "cpufreq/cpuinfo_max_freq").readText().trim().toInt()
+                }.getOrNull()
+            }.orEmpty()
+        if (freqs.isEmpty()) return 4
+        val max = freqs.max()
+        freqs.count { it * 100 >= max * 85 }.coerceIn(1, 6)
+    }.getOrDefault(4)
 
     private fun verifyChecksum(file: File, expected: String): Boolean {
         val md = MessageDigest.getInstance("SHA-256")

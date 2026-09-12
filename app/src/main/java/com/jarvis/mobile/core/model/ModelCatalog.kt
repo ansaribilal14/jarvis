@@ -30,6 +30,21 @@ object ModelCatalog {
 
     val MODELS = listOf(
         CatalogModel(
+            id = "smollm2-360m",
+            repo = "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
+            fileName = "smollm2-360m-instruct-q8_0.gguf",
+            url = "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf",
+            sizeBytes = 386404992,
+            sha256 = "48ab3034d0dd401fbc721eb1df3217902fee7dab9078992d66431f09b7750201",
+            params = "0.36B",
+            quant = "Q8_0",
+            contextTrain = 8192,
+            ramNeededGb = 0.8,
+            minDeviceClass = DeviceProfiler.DeviceClass.BASIC,
+            template = ChatTemplate.CHATML,
+            strengths = "Ultra-fast: highest tokens/sec of the catalog, quick prefill; great for simple device actions on any phone.",
+        ),
+        CatalogModel(
             id = "qwen25-05b",
             repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
             fileName = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
@@ -43,6 +58,21 @@ object ModelCatalog {
             minDeviceClass = DeviceProfiler.DeviceClass.BASIC,
             template = ChatTemplate.CHATML,
             strengths = "Fastest; reliable JSON tool output for its size; ideal on low-RAM phones.",
+        ),
+        CatalogModel(
+            id = "llama32-1b",
+            repo = "bartowski/Llama-3.2-1B-Instruct-GGUF",
+            fileName = "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+            url = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+            sizeBytes = 807694464,
+            sha256 = "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83",
+            params = "1B",
+            quant = "Q4_K_M",
+            contextTrain = 131072,
+            ramNeededGb = 1.7,
+            minDeviceClass = DeviceProfiler.DeviceClass.BASIC,
+            template = ChatTemplate.LLAMA3,
+            strengths = "Speed sweet spot: 1B model with strong instruction following and reliable JSON output.",
         ),
         CatalogModel(
             id = "smollm2-17b",

@@ -82,6 +82,8 @@ fun HomeScreen(openTab: (String) -> Unit) {
 
     val speech = remember { SpeechInput(context) }
     val voiceEnabled by container.settings.voiceInput.collectAsState(initial = true)
+    val apiMode by container.settings.apiMode.collectAsState(initial = false)
+    val nimModel by container.settings.nimModel.collectAsState(initial = "meta/llama-3.1-8b-instruct")
 
     LaunchedEffect(Unit) {
         speech.events.collectLatest { ev ->
@@ -117,16 +119,26 @@ fun HomeScreen(openTab: (String) -> Unit) {
             Spacer(Modifier.width(8.dp))
             StatusChip(
                 when {
+                    apiMode -> "API mode · ${nimModel.substringAfterLast('/')}"
                     loadState is com.jarvis.mobile.core.model.ModelManager.LoadState.Loading && loadedModelId != null -> "loading $loadedModelId…"
                     loadedModelId != null -> loadedModelId!!
                     else -> "no model loaded - tap here"
                 },
                 when {
+                    apiMode -> com.jarvis.mobile.ui.components.ChipState.OK
                     loadedModelId != null -> com.jarvis.mobile.ui.components.ChipState.OK
                     loadState is com.jarvis.mobile.core.model.ModelManager.LoadState.Loading -> com.jarvis.mobile.ui.components.ChipState.ACCENT
                     else -> com.jarvis.mobile.ui.components.ChipState.WARN
                 },
             )
+            Spacer(Modifier.width(8.dp))
+            IconButton(onClick = { com.jarvis.mobile.ui.components.ApiDrawerBus.requestOpen() }) {
+                Icon(
+                    androidx.compose.material.icons.Icons.Filled.Bolt,
+                    contentDescription = "API mode sidebar",
+                    tint = if (apiMode) com.jarvis.mobile.ui.theme.Accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         Spacer(Modifier.height(26.dp))
