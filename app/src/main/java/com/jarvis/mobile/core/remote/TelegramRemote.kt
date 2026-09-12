@@ -54,50 +54,53 @@ object TelegramRemote {
 
     fun start(context: Context) {
         stop()
-        val container = JarvisApp.instance.container
-        val token = container.vault.telegramBotToken
-        val enabled = runCatching { container.settings.telegramRemoteEnabled.first() }.getOrDefault(false)
-        if (!enabled || token.isBlank()) {
-            Logx.i(TAG, "Remote control disabled or token missing - not starting")
-            return
-        }
-        boundChatId = runCatching { container.settings.telegramChatId.first().toLongOrNull() ?: 0L }.getOrDefault(0L)
-        offset = runCatching { container.settings.telegramOffset.first() }.getOrDefault(0)
-        running = true
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val bootstrap = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        bootstrap.launch {
+            val container = JarvisApp.instance.container
+            val token = container.vault.telegramBotToken
+            val enabled = runCatching { container.settings.telegramRemoteEnabled.first() }.getOrDefault(false)
+            if (!enabled || token.isBlank()) {
+                Logx.i(TAG, "Remote control disabled or token missing - not starting")
+                return@launch
+            }
+            boundChatId = runCatching { container.settings.telegramChatId.first().toLongOrNull() ?: 0L }.getOrDefault(0L)
+            offset = runCatching { container.settings.telegramOffset.first() }.getOrDefault(0)
+            running = true
+            scope = bootstrap
 
-        pollJob = scope!!.launch {
-            Logx.i(TAG, "Telegram polling started (bound chat: ${if (boundChatId != 0L) boundChatId else "first sender"})")
-            var failures = 0
-            while (isActive && running) {
-                try {
-                    pollOnce(token)
-                    failures = 0
-                } catch (t: Throwable) {
-                    failures++
-                    Logx.e(TAG, "Poll error (${failures}): ${t.message}")
-                    kotlinx.coroutines.delay(if (failures > 3) 15_000L else 4_000L)
+            pollJob = bootstrap.launch {
+                Logx.i(TAG, "Telegram polling started (bound chat: ${if (boundChatId != 0L) boundChatId else "first sender"})")
+                var failures = 0
+                while (isActive && running) {
+                    try {
+                        pollOnce(token)
+                        failures = 0
+                    } catch (t: Throwable) {
+                        failures++
+                        Logx.e(TAG, "Poll error (${failures}): ${t.message}")
+                        kotlinx.coroutines.delay(if (failures > 3) 15_000L else 4_000L)
+                    }
                 }
             }
-        }
 
-        // Report task outcomes back to the chat that started them.
-        watchJob = scope!!.launch {
-            AgentEngine.state.collect { st ->
-                val terminal = st.status in setOf(AgentStatus.COMPLETED, AgentStatus.FAILED, AgentStatus.STOPPED)
-                if (terminal && pendingTelegramTask &&
-                    lastReportedStatus !in setOf(AgentStatus.COMPLETED, AgentStatus.FAILED, AgentStatus.STOPPED)
-                ) {
-                    pendingTelegramTask = false
-                    val verdict = when (st.status) {
-                        AgentStatus.COMPLETED -> "Task completed."
-                        AgentStatus.FAILED -> "Task failed."
-                        else -> "Task stopped."
+            // Report task outcomes back to the chat that started them.
+            watchJob = bootstrap.launch {
+                AgentEngine.state.collect { st ->
+                    val terminal = st.status in setOf(AgentStatus.COMPLETED, AgentStatus.FAILED, AgentStatus.STOPPED)
+                    if (terminal && pendingTelegramTask &&
+                        lastReportedStatus !in setOf(AgentStatus.COMPLETED, AgentStatus.FAILED, AgentStatus.STOPPED)
+                    ) {
+                        pendingTelegramTask = false
+                        val verdict = when (st.status) {
+                            AgentStatus.COMPLETED -> "Task completed."
+                            AgentStatus.FAILED -> "Task failed."
+                            else -> "Task stopped."
+                        }
+                        val body = st.finalResponse?.takeIf { it.isNotBlank() } ?: "(no detail reported)"
+                        sendToBoundChat("$verdict\n$body")
                     }
-                    val body = st.finalResponse?.takeIf { it.isNotBlank() } ?: "(no detail reported)"
-                    sendToBoundChat("$verdict\n$body")
+                    lastReportedStatus = st.status
                 }
-                lastReportedStatus = st.status
             }
         }
     }
