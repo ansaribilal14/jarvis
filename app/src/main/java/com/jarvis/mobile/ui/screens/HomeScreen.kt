@@ -1,5 +1,6 @@
 package com.jarvis.mobile.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -41,17 +43,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.core.agent.AgentEngine
 import com.jarvis.mobile.core.agent.AgentStatus
 import com.jarvis.mobile.core.voice.SpeechInput
+import com.jarvis.mobile.ui.components.ChipState
 import com.jarvis.mobile.ui.components.ConfirmDialog
 import com.jarvis.mobile.ui.components.EmptyState
 import com.jarvis.mobile.ui.components.StatusChip
 import com.jarvis.mobile.ui.components.stepColor
 import com.jarvis.mobile.ui.theme.Accent
 import com.jarvis.mobile.ui.theme.Danger
+import com.jarvis.mobile.ui.theme.Ok
+import com.jarvis.mobile.ui.theme.Warn
 import kotlinx.coroutines.flow.collectLatest
 
 private val quickCommands = listOf(
@@ -67,6 +73,7 @@ fun HomeScreen(openTab: (String) -> Unit) {
     val container = JarvisApp.instance.container
     val agentState by AgentEngine.state.collectAsState()
     val loadState by container.modelManager.loadState.collectAsState()
+    val genState by container.modelManager.llama.genState.collectAsState()
     var input by remember { mutableStateOf("") }
     var voiceHint by remember { mutableStateOf("") }
 
@@ -148,6 +155,63 @@ fun HomeScreen(openTab: (String) -> Unit) {
             },
             style = MaterialTheme.typography.titleLarge,
         )
+
+        // ---- live progress strip: the user always knows something is happening
+        if (busy) {
+            Spacer(Modifier.height(10.dp))
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                color = Accent,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                StatusChip(fmtElapsed(agentState.elapsedMs), ChipState.ACCENT)
+                if (agentState.stepBudget > 0) {
+                    StatusChip("Step ${agentState.stepIndex}/${agentState.stepBudget}", ChipState.NEUTRAL)
+                }
+            }
+            agentState.thinkingDetail?.let { detail ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        // ---- live model output while the local LLM writes its plan
+        val partial = genState.partialText
+        if (agentState.status == AgentStatus.THINKING && genState.generating && partial.isNotBlank()) {
+            Spacer(Modifier.height(14.dp))
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, Accent.copy(alpha = 0.25f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        "LIVE MODEL OUTPUT",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Accent,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "…" + partial.takeLast(220),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 5,
+                    )
+                }
+            }
+        }
         if (voiceHint.isNotBlank()) {
             Text("“$voiceHint”", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -190,6 +254,35 @@ fun HomeScreen(openTab: (String) -> Unit) {
         } else if (agentState.finalResponse != null) {
             Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
                 Text(agentState.finalResponse ?: "", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyLarge)
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // ---- live activity feed: chronological "what am I doing right now"
+        if (agentState.events.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("ACTIVITY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    agentState.events.takeLast(if (busy) 7 else 12).forEach { ev ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                fmtElapsed(ev.elapsedMs),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Box(Modifier.size(7.dp).clip(CircleShape).background(eventColor(ev.kind)))
+                            Text(
+                                ev.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
             Spacer(Modifier.height(16.dp))
         }
@@ -258,4 +351,18 @@ fun HomeScreen(openTab: (String) -> Unit) {
     agentState.confirmation?.let { req ->
         ConfirmDialog(req) { id, approved -> AgentEngine.answerConfirmation(id, approved) }
     }
+}
+
+private fun fmtElapsed(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    return "${s / 60}:${(s % 60).toString().padStart(2, '0')}"
+}
+
+@androidx.compose.runtime.Composable
+private fun eventColor(kind: String): androidx.compose.ui.graphics.Color = when (kind) {
+    "ok" -> Ok
+    "warn" -> Warn
+    "err" -> Danger
+    "model" -> Accent
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }

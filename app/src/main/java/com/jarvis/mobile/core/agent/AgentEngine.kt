@@ -23,10 +23,11 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.JsonObject
+import java.util.Locale
 
 /** Everything the live agent UI needs (spec: LIVE AGENT UI). */
 data class StepUi(
@@ -35,6 +36,14 @@ data class StepUi(
     val label: String,
     val status: String, // PENDING RUNNING SUCCESS FAILED BLOCKED SKIPPED
     val verdict: String? = null,
+)
+
+/** Human-readable line in the live activity feed ("something is happening" visibility). */
+data class AgentEvent(
+    val atMs: Long, // wall clock
+    val elapsedMs: Long, // relative to task start
+    val text: String,
+    val kind: String, // info ok warn err model
 )
 
 data class AgentUiState(
@@ -47,6 +56,13 @@ data class AgentUiState(
     val finalResponse: String? = null,
     val confirmation: ConfirmationRequest? = null,
     val pausedForUser: Boolean = false,
+    // Live-progress additions (v1.2): user must always know what is happening.
+    val startedAtMs: Long = 0L,
+    val elapsedMs: Long = 0L,
+    val stepIndex: Int = 0,
+    val stepBudget: Int = 0,
+    val thinkingDetail: String? = null,
+    val events: List<AgentEvent> = emptyList(),
 )
 
 enum class AgentStatus { IDLE, THINKING, ACTING, VERIFYING, WAITING_CONFIRMATION, COMPLETED, FAILED, STOPPED }
@@ -54,6 +70,8 @@ enum class AgentStatus { IDLE, THINKING, ACTING, VERIFYING, WAITING_CONFIRMATION
 /**
  * The agent engine. Real observe → decide → act → verify → adapt loop with
  * bounded budgets, global stop, user-override detection and honest outcomes.
+ * Every phase transition emits a live event + elapsed clock, so slow on-device
+ * inference is never a silent black box.
  */
 object AgentEngine {
 
@@ -62,6 +80,12 @@ object AgentEngine {
 
     private val _state = MutableStateFlow(AgentUiState())
     val state: StateFlow<AgentUiState> = _state
+    private val stateLock = Any()
+
+    /** Single serialized state writer - prevents ticker/loop/event lost-update races. */
+    private fun commit(f: (AgentUiState) -> AgentUiState) {
+        synchronized(stateLock) { _state.value = f(_state.value) }
+    }
 
     private val _confirmations = MutableSharedFlow<ConfirmationRequest>(extraBufferCapacity = 4)
     val confirmations: SharedFlow<ConfirmationRequest> = _confirmations
@@ -69,6 +93,20 @@ object AgentEngine {
     private var job: Job? = null
     @Volatile private var stopped = false
     @Volatile private var diverged = false
+    @Volatile private var slowWarned = false
+
+    /** Live activity feed for the running task (member-level so all phases can log). */
+    private val taskEvents = mutableListOf<AgentEvent>()
+    @Volatile private var taskStartMs = 0L
+
+    private fun event(text: String, kind: String = "info") {
+        synchronized(stateLock) {
+            taskEvents.add(AgentEvent(System.currentTimeMillis(), System.currentTimeMillis() - taskStartMs, text, kind))
+            if (taskEvents.size > 60) taskEvents.removeAt(0)
+            _state.value = _state.value.copy(events = taskEvents.toList())
+        }
+        Logx.i(TAG, "event[$kind] $text")
+    }
 
     fun init(container: JarvisApp.Container) {
         c = container
@@ -77,7 +115,7 @@ object AgentEngine {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             ConfirmationManager.requests.collect { req ->
                 _confirmations.emit(req)
-                _state.value = _state.value.copy(status = AgentStatus.WAITING_CONFIRMATION, confirmation = req)
+                commit { it.copy(status = AgentStatus.WAITING_CONFIRMATION, confirmation = req) }
             }
         }
         // User-touch divergence detection (spec: HUMAN OVERRIDE).
@@ -100,11 +138,13 @@ object AgentEngine {
         router.cancelLocal()
         ConfirmationManager.cancelAll()
         job?.cancel()
-        _state.value = _state.value.copy(
-            status = AgentStatus.STOPPED,
-            confirmation = null,
-            finalResponse = _state.value.finalResponse ?: "Stopped by user.",
-        )
+        commit {
+            it.copy(
+                status = AgentStatus.STOPPED,
+                confirmation = null,
+                finalResponse = it.finalResponse ?: "Stopped by user.",
+            )
+        }
         Logx.w(TAG, "Agent STOPPED by user")
         c.voiceOutput.speak("Stopped.")
         com.jarvis.mobile.service.AgentForegroundService.stopAll()
@@ -119,6 +159,7 @@ object AgentEngine {
         }
         stopped = false
         diverged = false
+        slowWarned = false
         job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             execute(goal, source)
         }
@@ -126,7 +167,10 @@ object AgentEngine {
 
     // ------------------------------------------------------------------ loop
 
-    private suspend fun execute(goal: String, source: String) {
+    private suspend fun execute(goal: String, source: String) = coroutineScope {
+        val startMs = System.currentTimeMillis()
+        taskStartMs = startMs
+        synchronized(stateLock) { taskEvents.clear() }
         val taskId = c.memory.startTask(goal, source)
         c.memory.addChat("USER", goal, taskId)
         val maxActions = runCatching { c.settings.maxActions.first() }.getOrDefault(12)
@@ -135,10 +179,44 @@ object AgentEngine {
         val steps = mutableListOf<StepUi>()
 
         fun update(f: (AgentUiState) -> AgentUiState) {
-            _state.value = f(_state.value).copy(steps = steps.toList())
+            synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList()) }
         }
 
-        update { it.copy(status = AgentStatus.THINKING, goal = goal, finalResponse = null, route = "…") }
+        // 1 Hz heartbeat: elapsed clock + live generation stats folded into the UI,
+        // so a 60s local inference shows "writing · 34 tokens · 4.2 tok/s" instead of a frozen label.
+        val ticker = launch {
+            while (isActive) {
+                delay(1000)
+                val now = System.currentTimeMillis()
+                val st = _state.value
+                var detail: String? = null
+                if (st.status == AgentStatus.THINKING) {
+                    val g = c.modelManager.llama.genState.value
+                    detail = when {
+                        g.generating && g.phase == 0 && g.promptTotal > 0 ->
+                            "Reading context ${g.promptDone}/${g.promptTotal} tokens…"
+                        g.generating && g.phase == 1 ->
+                            "Writing · ${g.outTokens} tokens · ${fmt1(g.tokensPerSec)} tok/s"
+                        g.generating -> "Waking the model…"
+                        else -> null
+                    }
+                    if (g.generating && g.phase == 1 && g.outTokens == 0 && now - startMs > 90_000 && !slowWarned) {
+                        slowWarned = true
+                        event("Model is slow to respond (large context / heavy CPU load) - still running, not frozen.", "warn")
+                    }
+                }
+                commit { it.copy(elapsedMs = now - startMs, thinkingDetail = detail) }
+            }
+        }
+
+        update {
+            it.copy(
+                status = AgentStatus.THINKING, goal = goal, finalResponse = null, route = "…",
+                startedAtMs = startMs, elapsedMs = 0, stepIndex = 0, stepBudget = maxActions,
+                thinkingDetail = null, events = emptyList(),
+            )
+        }
+        event("Task received: \"$goal\"", "ok")
         com.jarvis.mobile.service.AgentForegroundService.start("Working on: $goal")
         c.voiceOutput.speak("Working on it.")
         Logx.i(TAG, "Task start: \"$goal\" (source=$source, budget=$maxActions)")
@@ -148,10 +226,12 @@ object AgentEngine {
 
             while (actionsUsed < maxActions && !stopped) {
                 // 1. OBSERVE -------------------------------------------------
-                update { it.copy(status = AgentStatus.THINKING, pausedForUser = diverged) }
+                update { it.copy(status = AgentStatus.THINKING, pausedForUser = diverged, thinkingDetail = null) }
+                event("Observing screen…")
                 var screen: ScreenObservation? = null
                 if (diverged) {
                     Logx.i(TAG, "Divergence: re-observing fresh state")
+                    event("You touched the screen - re-observing fresh state", "warn")
                     diverged = false
                 }
                 if (JarvisAccessibilityService.isReady) {
@@ -159,26 +239,31 @@ object AgentEngine {
                         JarvisAccessibilityService.INSTANCE?.observe()
                     }
                 }
+                if (screen == null) event("Accessibility observation unavailable (service off?)", "warn")
                 val suspicion = InjectionGuard.inspect(screen)
                 if (suspicion.level == InjectionGuard.Level.SUSPICIOUS) {
                     Logx.w(TAG, "Prompt-injection pattern detected on screen: ${suspicion.reasons}")
+                    event("Suspicious on-screen instructions ignored (prompt-injection guard)", "warn")
                 }
 
                 // 2. DECIDE --------------------------------------------------
+                event("Thinking about the next move…")
                 val decision = decide(goal, screen, history, suspicion)
-                val routeLabel = router.routeLabel()
-                update { it.copy(route = routeLabel) }
+                update { it.copy(route = decision.routeName) }
 
                 if (decision.action == null) {
+                    event("Final answer ready", "ok")
                     finalResponse = decision.response
                     break
                 }
                 val action = decision.action
+                event("Planned: ${action.tool}", "model")
                 val tool = ToolRegistry.get(action.tool)
                 if (tool == null || !tool.available()) {
                     finalResponse = "The action \"${action.tool}\" is not available right now (missing permission or service)."
                     history.add(action to "BLOCKED: tool unavailable")
                     steps.add(StepUi(steps.size + 1, action.tool, action.tool, "BLOCKED"))
+                    event("\"${action.tool}\" unavailable - blocked", "err")
                     continue
                 }
 
@@ -188,6 +273,7 @@ object AgentEngine {
                 val needsConfirm = RiskClassifier.requiresConfirmation(risk, autoApprove) &&
                     source != "ROUTINE" // routines run only LOW-risk tools anyway
                 if (needsConfirm) {
+                    event("Risky action - asking for your confirmation", "warn")
                     val approved = ConfirmationManager.request(
                         what = "Run \"${tool.spec.name}\"",
                         target = screen?.packageName ?: "system",
@@ -200,15 +286,19 @@ object AgentEngine {
                         finalResponse = "You declined \"${tool.spec.name}\". Task stopped safely."
                         steps.add(StepUi(steps.size + 1, action.tool, action.tool, "SKIPPED", "declined"))
                         history.add(action to "DECLINED by user")
+                        event("You declined the action - task stopped safely", "warn")
                         break
                     }
+                    event("Confirmed - continuing", "ok")
                 }
 
                 // 4. ACT -----------------------------------------------------
                 update { it.copy(status = AgentStatus.ACTING, activeTool = action.tool, currentApp = screen?.packageName) }
                 actionsUsed++
+                update { it.copy(stepIndex = actionsUsed) }
                 steps.add(StepUi(steps.size + 1, action.tool, action.tool, "RUNNING"))
                 update { it }
+                event("Running ${action.tool} (step $actionsUsed of $maxActions)…")
 
                 val result: ToolResult = try {
                     withTimeoutOrNull(30_000) {
@@ -236,12 +326,20 @@ object AgentEngine {
                     verdict = result.message.take(120),
                 )
                 update { it }
+                event(
+                    when (result.status) {
+                        ToolStatus.SUCCESS -> "Done: ${result.message.take(90)}"
+                        else -> "Step ${action.tool} did not succeed: ${result.message.take(90)}"
+                    },
+                    if (result.status == ToolStatus.SUCCESS) "ok" else "err",
+                )
                 c.memory.addStep(taskId, steps.size, action.tool, action.args.toString(), steps.last().status, result.message, verdict)
                 history.add(action to verdict)
 
                 // 6. ADAPT ---------------------------------------------------
                 if (result.status != ToolStatus.SUCCESS) {
                     Logx.w(TAG, "Step failed (${action.tool}): ${result.message.take(120)} → replanning")
+                    event("Replanning after failure…", "warn")
                     delay(400)
                 } else {
                     update { it.copy(currentApp = screen?.packageName) }
@@ -250,29 +348,43 @@ object AgentEngine {
 
             if (finalResponse == null && actionsUsed >= maxActions) {
                 finalResponse = "I used my action budget ($maxActions actions) without completing the task. Stopped safely."
+                event("Action budget exhausted - stopping safely", "warn")
             }
             finish(taskId, goal, source, finalResponse, actionsUsed)
         } catch (ce: CancellationException) {
+            event("Task stopped by user", "warn")
             c.memory.finishTask(taskId, "STOPPED", "Stopped by user.", actionsUsed)
         } catch (t: Throwable) {
             Logx.e(TAG, "Engine crashed: ${t.message}")
             c.memory.finishTask(taskId, "FAILED", "Engine error: ${t.message?.take(100)}", actionsUsed)
-            _state.value = _state.value.copy(status = AgentStatus.FAILED, finalResponse = "Something went wrong inside me: ${t.message?.take(120)}")
+            commit { it.copy(status = AgentStatus.FAILED, finalResponse = "Something went wrong inside me: ${t.message?.take(120)}") }
             com.jarvis.mobile.service.AgentForegroundService.stopAll()
+        } finally {
+            ticker.cancel()
         }
     }
+
+    private data class RoutedDecision(
+        val action: PlannedAction?,
+        val response: String?,
+        val routeName: String,
+    )
 
     private suspend fun decide(
         goal: String,
         screen: ScreenObservation?,
         history: List<Pair<PlannedAction, String>>,
         suspicion: InjectionGuard.Verdict,
-    ): Planner.Decision {
+    ): RoutedDecision {
         val snap = c.settings.snapshot()
         val route = router.decide()
         updateRoute(route.route.name)
-        return when (route.route) {
-            ModelRouter.Route.RULES -> DeterministicPlanner.decide(goal, screen)
+        event("Route: ${route.route.name.lowercase()} (${route.reason.take(70)})")
+        val res = when (route.route) {
+            ModelRouter.Route.RULES -> {
+                val d = DeterministicPlanner.decide(goal, screen)
+                RoutedDecision(d.action, d.response, route.route.name)
+            }
             else -> {
                 val system = Planner.systemPrompt(suspicion, factsBlock())
                 val user = Planner.userPrompt(goal, screen, history, route.reason)
@@ -280,20 +392,30 @@ object AgentEngine {
                     ?: com.jarvis.mobile.core.model.ModelCatalog.ChatTemplate.CHATML
                 val prompt = com.jarvis.mobile.core.model.PromptTemplates.render(template, system, user)
                 val (result, _) = router.generate(prompt, maxTokens = 220)
+                // Honest timing stats for the live feed (local route fills genState).
+                val g = c.modelManager.llama.genState.value
+                if (route.route == ModelRouter.Route.LOCAL && g.outTokens > 0) {
+                    event("Model wrote ${g.outTokens} tokens in ${fmtSecs(g.elapsedMs)} (${fmt1(g.tokensPerSec)} tok/s)", "model")
+                }
                 result.fold(
                     onSuccess = { text ->
                         val parsed = Planner.parseDecision(text)
                         if (parsed.action == null && parsed.response.isNullOrBlank()) {
-                            Planner.Decision(null, "I could not interpret the model output.", text)
-                        } else parsed
+                            RoutedDecision(null, "I could not interpret the model output.", route.route.name)
+                        } else {
+                            RoutedDecision(parsed.action, parsed.response, route.route.name)
+                        }
                     },
                     onFailure = { t ->
                         Logx.w(TAG, "LLM route failed (${t.message}); falling back to rules")
-                        DeterministicPlanner.decide(goal, screen)
+                        event("LLM failed (${t.message?.take(60)}) - falling back to rule engine", "warn")
+                        val d = DeterministicPlanner.decide(goal, screen)
+                        RoutedDecision(d.action, d.response, ModelRouter.Route.RULES.name)
                     },
                 )
             }
         }
+        return res
     }
 
     private suspend fun finish(taskId: Long, goal: String, source: String, response: String?, actionsUsed: Int) {
@@ -305,12 +427,15 @@ object AgentEngine {
         }
         c.memory.finishTask(taskId, status, honest.take(300), actionsUsed)
         c.memory.addChat("JARVIS", honest, taskId)
-        _state.value = _state.value.copy(
-            status = if (status == "COMPLETED") AgentStatus.COMPLETED else if (status == "STOPPED") AgentStatus.STOPPED else AgentStatus.FAILED,
-            finalResponse = honest,
-            activeTool = null,
-            confirmation = null,
-        )
+        commit {
+            it.copy(
+                status = if (status == "COMPLETED") AgentStatus.COMPLETED else if (status == "STOPPED") AgentStatus.STOPPED else AgentStatus.FAILED,
+                finalResponse = honest,
+                activeTool = null,
+                confirmation = null,
+                thinkingDetail = null,
+            )
+        }
         Logx.i(TAG, "Task done ($status): ${honest.take(140)}")
         c.voiceOutput.speak(honest.take(180))
         com.jarvis.mobile.service.AgentForegroundService.stopAll()
@@ -319,10 +444,15 @@ object AgentEngine {
     private fun stepsFailed(): Boolean = _state.value.steps.any { it.status == "FAILED" || it.status == "BLOCKED" }
 
     private fun updateRoute(label: String) {
-        _state.value = _state.value.copy(route = label)
+        commit { it.copy(route = label) }
+    }
+
+    private fun fmt1(v: Float): String = String.format(Locale.US, "%.1f", v)
+
+    private fun fmtSecs(ms: Long): String {
+        val s = ms / 1000
+        return if (s >= 60) "${s / 60}m${s % 60}s" else "${s}s"
     }
 
     private const val TAG = "engine"
 }
-
-private suspend fun ModelRouter.routeLabel(): String = decide().route.name

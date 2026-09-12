@@ -190,9 +190,21 @@ object TelegramRemote {
         val container = JarvisApp.instance.container
         val model = container.modelManager.activeId() ?: "none loaded"
         val a11y = com.jarvis.mobile.accessibility.JarvisAccessibilityService.isReady
+        val s = st.elapsedMs / 1000
+        val clock = "${s / 60}:${(s % 60).toString().padStart(2, '0')}"
+        val gen = container.modelManager.llama.genState.value
+        val genBit = if (gen.generating) {
+            when (gen.phase) {
+                0 -> "\nInference: reading context ${gen.promptDone}/${gen.promptTotal} tokens"
+                else -> "\nInference: ${gen.outTokens} tokens written"
+            }
+        } else ""
         return buildString {
             append("Agent: ${st.status.name.lowercase()}")
+            if (st.elapsedMs > 0) append(" · $clock")
             if (st.goal.isNotBlank()) append("\nGoal: ${st.goal.take(180)}")
+            if (st.stepBudget > 0) append("\nProgress: step ${st.stepIndex}/${st.stepBudget}")
+            genBit.takeIf { it.isNotBlank() }?.let { append(it) }
             append("\nModel: $model")
             append("\nAccessibility: ${if (a11y) "on" else "off"}")
             if (st.status == AgentStatus.WAITING_CONFIRMATION) append("\nWaiting for your confirmation ON THE PHONE screen.")

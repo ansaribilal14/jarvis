@@ -2,12 +2,34 @@ package com.jarvis.mobile.core.model
 
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
+
+/** Live snapshot of an in-flight (or last) local generation. Drives the UI "Thinking…" detail. */
+data class GenState(
+    val generating: Boolean = false,
+    val phase: Int = 0, // 0 = reading prompt, 1 = writing tokens
+    val promptDone: Int = 0,
+    val promptTotal: Int = 0,
+    val outTokens: Int = 0,
+    val partialText: String = "",
+    val startedAtMs: Long = 0L,
+    val lastUpdateAtMs: Long = 0L,
+) {
+    val elapsedMs: Long get() = if (startedAtMs == 0L) 0 else (if (generating) System.currentTimeMillis() else lastUpdateAtMs) - startedAtMs
+    val tokensPerSec: Float
+        get() {
+            val secs = elapsedMs / 1000f
+            return if (secs > 0.4f && outTokens > 0) outTokens / secs else 0f
+        }
+}
 
 /**
  * llama.cpp-backed provider. One model loaded at a time; completions are
  * stateless (context managed by the agent layer) and cancellable.
+ * Streams native decode progress into [genState] so the UI can show live feedback.
  */
 class LlamaCppProvider(
     private val settings: com.jarvis.mobile.data.settings.SettingsRepository,
@@ -23,6 +45,9 @@ class LlamaCppProvider(
     private val generating = java.util.concurrent.atomic.AtomicBoolean(false)
 
     val activeModel: ModelCatalog.CatalogModel? get() = loadedModel
+
+    private val _genState = MutableStateFlow(GenState())
+    val genState: StateFlow<GenState> = _genState
 
     fun isModelFilePresent(model: ModelCatalog.CatalogModel, dir: java.io.File): Boolean =
         java.io.File(dir, model.fileName).let { it.exists() && it.length() == model.sizeBytes }
@@ -49,14 +74,30 @@ class LlamaCppProvider(
             return@withContext Result.failure(IllegalStateException("Inference already in progress"))
         }
         lastUsed.set(System.currentTimeMillis())
+        val started = System.currentTimeMillis()
+        _genState.value = GenState(generating = true, startedAtMs = started, lastUpdateAtMs = started)
+        val listener = LlamaBridge.ProgressListener { phase, promptDone, promptTotal, outTokens, partial ->
+            _genState.value = GenState(
+                generating = true,
+                phase = phase,
+                promptDone = promptDone,
+                promptTotal = promptTotal,
+                outTokens = outTokens,
+                partialText = partial?.let { String(it, Charsets.UTF_8) } ?: "",
+                startedAtMs = started,
+                lastUpdateAtMs = System.currentTimeMillis(),
+            )
+        }
         try {
-            val bytes = LlamaBridge.nativeComplete(prompt, maxTokens)
+            val bytes = LlamaBridge.nativeComplete(prompt, maxTokens, listener)
             if (bytes == null) Result.failure(IllegalStateException("Generation returned nothing (model error or cancelled)"))
             else Result.success(String(bytes, Charsets.UTF_8))
         } catch (t: Throwable) {
             Logx.e(TAG, "Generation crashed: ${t.message}")
             Result.failure(t)
         } finally {
+            val done = _genState.value
+            _genState.value = done.copy(generating = false, lastUpdateAtMs = System.currentTimeMillis())
             generating.set(false)
         }
     }
@@ -72,6 +113,7 @@ class LlamaCppProvider(
         }
         loadedFile = null
         loadedModel = null
+        _genState.value = GenState()
     }
 
     /** Benchmark: tokens/sec over a fixed tool-planning style prompt. */
@@ -79,7 +121,7 @@ class LlamaCppProvider(
         if (!isReady()) return@withContext Result.failure(IllegalStateException("No model loaded"))
         val prompt = "USER TASK: open chrome and search for local ai. Respond with one JSON action only."
         val start = System.currentTimeMillis()
-        val res = LlamaBridge.nativeComplete(prompt, 64)
+        val res = LlamaBridge.nativeComplete(prompt, 64, null)
         val ms = System.currentTimeMillis() - start
         if (res == null) Result.failure(IllegalStateException("Benchmark generation failed"))
         else Result.success(64_000.0 / ms.coerceAtLeast(1))

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -136,11 +137,42 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeFree(
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
-        JNIEnv *env, jobject /*thiz*/, jstring prompt, jint max_tokens) {
+        JNIEnv *env, jobject /*thiz*/, jstring prompt, jint max_tokens, jobject listener) {
     if (g_model == nullptr || g_ctx == nullptr) return nullptr;
     const std::string text = jstring_to_std(env, prompt);
     if (text.empty()) return nullptr;
     g_cancel = false;
+
+    // Optional progress listener (same-thread callback; Kotlin side keeps it alive
+    // for the duration of this call). Signature: onProgress(IIII[B)V where
+    // phase 0 = prompt eval, 1 = decoding; partial is UTF-8 bytes so arbitrary
+    // model output never hits the modified-UTF8 limit.
+    jmethodID on_progress = nullptr;
+    if (listener != nullptr) {
+        jclass cls = env->GetObjectClass(listener);
+        if (cls != nullptr) {
+            on_progress = env->GetMethodID(cls, "onProgress", "(IIII[B)V");
+            env->DeleteLocalRef(cls);
+        }
+    }
+    auto report = [&](int phase, int prompt_done, int prompt_total, int out_tokens,
+                      const std::string &partial) {
+        if (on_progress == nullptr) return;
+        jbyteArray arr = nullptr;
+        if (!partial.empty()) {
+            arr = env->NewByteArray(static_cast<jsize>(partial.size()));
+            if (arr != nullptr) {
+                env->SetByteArrayRegion(arr, 0, static_cast<jsize>(partial.size()),
+                                        reinterpret_cast<const jbyte *>(partial.data()));
+            }
+        }
+        env->CallVoidMethod(listener, on_progress,
+                            static_cast<jint>(phase), static_cast<jint>(prompt_done),
+                            static_cast<jint>(prompt_total), static_cast<jint>(out_tokens), arr);
+        if (arr != nullptr) env->DeleteLocalRef(arr);
+        if (env->ExceptionCheck()) env->ExceptionClear(); // never let UI callbacks kill inference
+    };
+    const auto report_start = std::chrono::steady_clock::now();
 
     const int n_ctx = static_cast<int>(llama_n_ctx(g_ctx));
 
@@ -192,10 +224,12 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
             return nullptr;
         }
         pos += chunk;
+        report(0, pos, n_prompt, 0, ""); // reading-context progress (chunks are coarse)
     }
 
     if (!g_cancel) {
         char buf[256];
+        int last_report_ms = 0;
         for (int i = 0; i < max_tokens; i++) {
             if (g_cancel) break;
             if (llama_get_kv_cache_used_cells(g_ctx) >= n_ctx - 2) break;
@@ -209,6 +243,14 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
 
             llama_token next = sampled; // batch API takes a mutable token pointer
             if (llama_decode(g_ctx, llama_batch_get_one(&next, 1)) != 0) break;
+
+            // Throttled live progress (~4 Hz): tokens written + partial text.
+            const int elapsed_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - report_start).count());
+            if (on_progress != nullptr && elapsed_ms - last_report_ms >= 250) {
+                last_report_ms = elapsed_ms;
+                report(1, n_prompt, n_prompt, i + 1, out);
+            }
         }
     }
     llama_sampler_free(smpl);

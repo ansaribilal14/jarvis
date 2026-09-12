@@ -54,14 +54,16 @@ class AgentForegroundService : Service() {
                     return@collect
                 }
                 val nm = getSystemService(NotificationManager::class.java)
-                nm.notify(NOTIF_ID, buildNotification(st.goal.ifBlank { "Working" }, st.activeTool))
+                nm.notify(NOTIF_ID, buildNotification(st))
             }
         }
         return START_STICKY
     }
 
     private fun startAsForeground(task: String) {
-        val notif = buildNotification(task, null)
+        val notif = buildNotification(
+            com.jarvis.mobile.core.agent.AgentUiState(goal = task),
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIF_ID, notif,
@@ -72,7 +74,23 @@ class AgentForegroundService : Service() {
         }
     }
 
-    private fun buildNotification(task: String, activeTool: String?): Notification {
+    /** Live notification: phase · elapsed · tokens — mirrors the in-app progress strip. */
+    private fun buildNotification(st: com.jarvis.mobile.core.agent.AgentUiState): Notification {
+        val task = st.goal.ifBlank { "Working" }
+        val phase = when (st.status) {
+            com.jarvis.mobile.core.agent.AgentStatus.THINKING -> "Thinking"
+            com.jarvis.mobile.core.agent.AgentStatus.ACTING -> "Acting" + (st.activeTool?.let { " · $it" } ?: "")
+            com.jarvis.mobile.core.agent.AgentStatus.VERIFYING -> "Verifying"
+            com.jarvis.mobile.core.agent.AgentStatus.WAITING_CONFIRMATION -> "Waiting for you"
+            else -> null
+        }
+        val s = st.elapsedMs / 1000
+        val clock = "${s / 60}:${(s % 60).toString().padStart(2, '0')}"
+        val gen = JarvisApp.instance.container.modelManager.llama.genState.value
+        val tokenBit = if (st.status == com.jarvis.mobile.core.agent.AgentStatus.THINKING && gen.generating && gen.outTokens > 0) {
+            " · ${gen.outTokens} tok"
+        } else ""
+        val detail = listOfNotNull(phase, if (st.elapsedMs > 0) clock else null).joinToString(" · ")
         val open = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -85,12 +103,13 @@ class AgentForegroundService : Service() {
         return NotificationCompat.Builder(this, JarvisApp.CH_AGENT)
             .setSmallIcon(R.drawable.ic_tile_orb)
             .setContentTitle(getString(R.string.agent_running))
-            .setContentText(if (activeTool != null) "$task · $activeTool" else task)
+            .setContentText(if (detail.isBlank()) task else "$task · $detail$tokenBit")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openPi)
             .addAction(0, getString(R.string.stop_agent), stopPi)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setProgress(0, 0, true)
             .build()
     }
 
