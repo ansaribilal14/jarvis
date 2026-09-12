@@ -158,11 +158,92 @@ object AgentEngine {
             Logx.w(TAG, "Task requested while busy: ignored (stop first)")
             return
         }
+        // Direct intents: pure information requests are answered WITHOUT any AI -
+        // no router, no model, nothing to hang or hallucinate. Runs even when no
+        // model is loaded and even while the local model is busy.
+        if (source != "ROUTINE" && isDirectNotificationRequest(goal)) {
+            runDirectNotifications(goal, source)
+            return
+        }
         stopped = false
         diverged = false
         slowWarned = false
         job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             execute(goal, source)
+        }
+    }
+
+    /** Strict whole-utterance matcher: ONLY pure notification-reading requests bypass the AI. */
+    private fun isDirectNotificationRequest(goal: String): Boolean {
+        val g = goal.trim().lowercase(Locale.US).removeSuffix("?").replace("!", "").trim()
+        if (g.length > 48) return false // anything longer has extra clauses -> normal agent path
+        return Regex(
+            "^(please |jarvis |can you |could you )*(read|show|check|list|see|get|pull|any|what are|what's|whats)" +
+                "( me)?( my| the| recent| new| latest| any| all| me the| me my)* ?notifications?$",
+            RegexOption.IGNORE_CASE,
+        ).matches(g)
+    }
+
+    /**
+     * Zero-AI fast path for "read my notifications": executes the notification
+     * reader directly, shows + speaks the result in ~1 second. Deterministic by
+     * design - it cannot get stuck at the model, cannot route anywhere, and
+     * cannot hallucinate notification contents (they come from the OS listener).
+     */
+    private fun runDirectNotifications(goal: String, source: String) {
+        stopped = false
+        diverged = false
+        slowWarned = false
+        job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            val startMs = System.currentTimeMillis()
+            taskStartMs = startMs
+            synchronized(stateLock) { taskEvents.clear() }
+            val taskId = c.memory.startTask(goal, source)
+            c.memory.addChat("USER", goal, taskId)
+            val ticker = launch {
+                while (isActive) {
+                    delay(1000)
+                    commit { it.copy(elapsedMs = System.currentTimeMillis() - startMs) }
+                }
+            }
+            commit {
+                it.copy(
+                    status = AgentStatus.THINKING, goal = goal, finalResponse = null, route = "DIRECT",
+                    startedAtMs = startMs, elapsedMs = 0, stepIndex = 1, stepBudget = 1,
+                    thinkingDetail = null, events = emptyList(), confirmation = null,
+                )
+            }
+            event("Direct request - no AI needed, reading notifications now", "ok")
+            Logx.i(TAG, "Direct intent: notifications (source=$source)")
+            val tool = ToolRegistry.get("read_notifications")
+            val result = if (tool == null) ToolResult.fail("Notification reader unavailable.")
+            else withTimeoutOrNull(10_000) {
+                tool.execute(kotlinx.serialization.json.JsonObject(emptyMap()), ToolContext(null))
+            } ?: ToolResult.fail("Reading notifications timed out.")
+            val response = buildString {
+                append(result.message)
+                if (!result.detail.isNullOrBlank()) {
+                    append("\n")
+                    append(result.detail)
+                }
+                if (result.status != ToolStatus.SUCCESS && result.recoveryHint == "open-notification-listener-settings") {
+                    append("\n(Settings > Apps > Special access > Notification access > JARVIS)")
+                }
+            }
+            val ok = result.status == ToolStatus.SUCCESS
+            commit {
+                it.copy(
+                    status = if (ok) AgentStatus.COMPLETED else AgentStatus.FAILED,
+                    finalResponse = response,
+                    thinkingDetail = null,
+                    elapsedMs = System.currentTimeMillis() - startMs,
+                )
+            }
+            event(if (ok) "Notifications read directly (no AI)" else "Could not read notifications", if (ok) "ok" else "err")
+            c.memory.finishTask(taskId, if (ok) "COMPLETED" else "FAILED", response.take(300), 1)
+            c.memory.addChat("JARVIS", response, taskId)
+            c.voiceOutput.speak(response.take(180))
+            ticker.cancel()
         }
     }
 

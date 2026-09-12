@@ -52,6 +52,30 @@ fun ModelsScreen() {
     val loadState by container.modelManager.loadState.collectAsState()
     var benchmarkResult by remember { mutableStateOf<Double?>(null) }
     var importMessage by remember { mutableStateOf<String?>(null) }
+    var testingModelId by remember { mutableStateOf<String?>(null) }
+    // modelId -> (honest result message, ok?)
+    var testOutcome by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
+
+    val runModelTest: (ModelCatalog.CatalogModel) -> Unit = { m ->
+        scope.launch {
+            testingModelId = m.id
+            testOutcome = null
+            val r = container.modelManager.testActive()
+            testOutcome = Triple(
+                m.id,
+                r.fold(
+                    onSuccess = { rep ->
+                        "OK - replied in %.1fs · %d tokens · %.1f tok/s · \"%s\"".format(
+                            rep.elapsedMs / 1000.0, rep.tokens, rep.tokensPerSec, rep.snippet,
+                        )
+                    },
+                    onFailure = { it.message ?: "Test failed." },
+                ),
+                r.isSuccess,
+            )
+            testingModelId = null
+        }
+    }
 
     val loadingModelId = (loadState as? ModelManager.LoadState.Loading)?.modelId
     val activeModelId = (loadState as? ModelManager.LoadState.Loaded)?.modelId
@@ -114,6 +138,10 @@ fun ModelsScreen() {
                 onCancel = { container.modelManager.cancel(recommended) },
                 onActivate = { scope.launch { container.modelManager.selectAndLoad(recommended) } },
                 onDelete = { container.modelManager.delete(recommended) },
+                onTest = { runModelTest(recommended) },
+                isTesting = testingModelId == recommended.id,
+                testMessage = testOutcome?.takeIf { it.first == recommended.id }?.second,
+                testOk = testOutcome?.takeIf { it.first == recommended.id }?.third ?: false,
             )
         }
 
@@ -133,6 +161,10 @@ fun ModelsScreen() {
                     onCancel = { container.modelManager.cancel(m) },
                     onActivate = { scope.launch { container.modelManager.selectAndLoad(m) } },
                     onDelete = { container.modelManager.delete(m) },
+                    onTest = { runModelTest(m) },
+                    isTesting = testingModelId == m.id,
+                    testMessage = testOutcome?.takeIf { it.first == m.id }?.second,
+                    testOk = testOutcome?.takeIf { it.first == m.id }?.third ?: false,
                 )
                 Spacer(Modifier.height(4.dp))
             }
@@ -160,6 +192,10 @@ fun ModelsScreen() {
                         onCancel = {},
                         onActivate = { scope.launch { container.modelManager.selectAndLoad(m) } },
                         onDelete = { container.modelManager.delete(m) },
+                        onTest = { runModelTest(m) },
+                        isTesting = testingModelId == m.id,
+                        testMessage = testOutcome?.takeIf { it.first == m.id }?.second,
+                        testOk = testOutcome?.takeIf { it.first == m.id }?.third ?: false,
                     )
                     Spacer(Modifier.height(4.dp))
                 }
@@ -203,6 +239,10 @@ private fun ModelCard(
     onCancel: () -> Unit,
     onActivate: () -> Unit,
     onDelete: () -> Unit,
+    onTest: (() -> Unit)? = null,
+    isTesting: Boolean = false,
+    testMessage: String? = null,
+    testOk: Boolean = false,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -243,13 +283,29 @@ private fun ModelCard(
                                 CircularProgressIndicator(Modifier.size(22.dp), color = Accent, strokeWidth = 2.dp)
                                 Text("Loading…", style = MaterialTheme.typography.labelMedium, color = Accent)
                             }
-                            isActive -> StatusChip("ready", com.jarvis.mobile.ui.components.ChipState.OK)
+                            isActive -> {
+                                StatusChip("ready", com.jarvis.mobile.ui.components.ChipState.OK)
+                                when {
+                                    isTesting -> {
+                                        CircularProgressIndicator(Modifier.size(18.dp), color = Accent, strokeWidth = 2.dp)
+                                        Text("Testing…", style = MaterialTheme.typography.labelMedium, color = Accent)
+                                    }
+                                    else -> OutlinedButton(onClick = { onTest?.invoke() }, enabled = !isBusy) { Text("Test model") }
+                                }
+                            }
                             else -> Button(onClick = onActivate, enabled = !isBusy) { Text("Activate") }
                         }
                         OutlinedButton(onClick = onDelete, enabled = !isBusy) { Text("Delete") }
                     } else {
                         Button(onClick = onDownload, enabled = !isBusy) { Text("Download") }
                     }
+                }
+                if (isActive && testMessage != null) {
+                    Text(
+                        testMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (testOk) Accent else MaterialTheme.colorScheme.error,
+                    )
                 }
             }
         }

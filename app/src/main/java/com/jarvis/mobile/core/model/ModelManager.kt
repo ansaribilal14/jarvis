@@ -120,6 +120,17 @@ class ModelManager(
                 Logx.w(TAG, "Load already in progress (${loadingModelId}) - ignoring request for ${m.id}")
                 return@withLock false
             }
+            if (llama.isGenerating()) {
+                // Activating swaps the native model under the running inference
+                // (free_all in nativeLoadModel) - that is the same use-after-free
+                // class that froze tasks at "Waking the model". Refuse honestly.
+                Logx.w(TAG, "Activate ${m.id}: generation in flight - refusing to swap models")
+                _loadState.value = LoadState.Failed(
+                    m.id,
+                    "A task is using the model right now. Stop the task (or wait for it to finish), then activate.",
+                )
+                return@withLock false
+            }
             _loadState.value = LoadState.Loading(m.id)
             loadingModelId = m.id
             try {
@@ -338,6 +349,37 @@ class ModelManager(
 
     /** Load + measure; stores nothing fake - the value is what the device produced. */
     suspend fun benchmarkActive(): Result<Double> = llama.benchmark()
+
+    /** Real end-to-end test of the active model: one tiny generation, honest report. */
+    data class ModelTestReport(
+        val modelId: String,
+        val elapsedMs: Long,
+        val tokens: Int,
+        val tokensPerSec: Float,
+        val snippet: String,
+    )
+
+    suspend fun testActive(): Result<ModelTestReport> {
+        if (!llama.isReady()) return Result.failure(IllegalStateException("No model is active - activate one first."))
+        val id = activeId() ?: "?"
+        val prompt = "USER TASK: open chrome and search for local ai. Respond with one JSON action only."
+        val start = System.currentTimeMillis()
+        val res = llama.generate(prompt, maxTokens = 48)
+        val ms = System.currentTimeMillis() - start
+        return res.fold(
+            onSuccess = { text ->
+                val g = llama.genState.value
+                if (text.isBlank()) {
+                    Result.failure(IllegalStateException("Model produced no output in ${ms / 1000}s (empty reply)."))
+                } else {
+                    Result.success(ModelTestReport(id, ms, g.outTokens, g.tokensPerSec, text.take(90)))
+                }
+            },
+            onFailure = { t ->
+                Result.failure(IllegalStateException("Test failed after ${ms / 1000}s: ${t.message?.take(90) ?: "no output"}"))
+            },
+        )
+    }
 
     fun thermalDegraded(): Boolean {
         val pm = context.getSystemService(android.os.PowerManager::class.java) ?: return false

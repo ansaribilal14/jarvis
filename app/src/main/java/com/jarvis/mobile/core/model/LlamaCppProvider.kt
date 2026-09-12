@@ -60,6 +60,14 @@ class LlamaCppProvider(
 
     suspend fun load(model: ModelCatalog.CatalogModel, file: java.io.File, contextSize: Int, threads: Int): Boolean =
         withContext(Dispatchers.IO) {
+            // HARD GUARD: nativeLoadModel frees the old model/context first
+            // (free_all). Loading while a completion is decoding = same
+            // use-after-free class as the v1.3.0 watchdog bug. Never swap models
+            // under a live inference.
+            if (generating.get()) {
+                Logx.e(TAG, "Refusing to load ${model.id}: a completion is in flight")
+                return@withContext false
+            }
             val ok = LlamaBridge.nativeLoadModel(file.absolutePath, contextSize, threads)
             if (ok) {
                 loadedFile = file.absolutePath
