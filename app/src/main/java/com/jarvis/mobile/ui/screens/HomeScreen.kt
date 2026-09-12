@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -134,7 +135,7 @@ fun HomeScreen(openTab: (String) -> Unit) {
             Spacer(Modifier.width(8.dp))
             IconButton(onClick = { com.jarvis.mobile.ui.components.ApiDrawerBus.requestOpen() }) {
                 Icon(
-                    androidx.compose.material.icons.Icons.Filled.Bolt,
+                    Icons.Filled.Bolt,
                     contentDescription = "API mode sidebar",
                     tint = if (apiMode) com.jarvis.mobile.ui.theme.Accent else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
