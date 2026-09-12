@@ -36,6 +36,9 @@ class SettingsRepository(private val context: Context) {
         val REMOTE_BASE_URL = stringPreferencesKey("remote_base_url")
         val REMOTE_MODEL = stringPreferencesKey("remote_model")
         val SCREEN_COMPACT = booleanPreferencesKey("screen_compact")
+        val TELEGRAM_REMOTE_ENABLED = booleanPreferencesKey("telegram_remote_enabled")
+        val TELEGRAM_CHAT_ID = stringPreferencesKey("telegram_chat_id")
+        val TELEGRAM_OFFSET = intPreferencesKey("telegram_offset")
     }
 
     private val d get() = context.dataStore.data
@@ -57,6 +60,9 @@ class SettingsRepository(private val context: Context) {
     val remoteBaseUrl: Flow<String> = d.map { it[Keys.REMOTE_BASE_URL] ?: "" }
     val remoteModel: Flow<String> = d.map { it[Keys.REMOTE_MODEL] ?: "" }
     val screenCompact: Flow<Boolean> = d.map { it[Keys.SCREEN_COMPACT] ?: true }
+    val telegramRemoteEnabled: Flow<Boolean> = d.map { it[Keys.TELEGRAM_REMOTE_ENABLED] ?: false }
+    val telegramChatId: Flow<String> = d.map { it[Keys.TELEGRAM_CHAT_ID] ?: "" }
+    val telegramOffset: Flow<Int> = d.map { it[Keys.TELEGRAM_OFFSET] ?: 0 }
 
     suspend fun snapshot(): Snap = Snap(
         localOnly = localOnly.first(),
@@ -111,6 +117,9 @@ class SettingsRepository(private val context: Context) {
     suspend fun setRemoteBaseUrl(v: String) = set(Keys.REMOTE_BASE_URL, v)
     suspend fun setRemoteModel(v: String) = set(Keys.REMOTE_MODEL, v)
     suspend fun setScreenCompact(v: Boolean) = set(Keys.SCREEN_COMPACT, v)
+    suspend fun setTelegramRemoteEnabled(v: Boolean) = set(Keys.TELEGRAM_REMOTE_ENABLED, v)
+    suspend fun setTelegramChatId(v: String) = set(Keys.TELEGRAM_CHAT_ID, v)
+    suspend fun setTelegramOffset(v: Int) = set(Keys.TELEGRAM_OFFSET, v)
 
     private suspend fun <T> set(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

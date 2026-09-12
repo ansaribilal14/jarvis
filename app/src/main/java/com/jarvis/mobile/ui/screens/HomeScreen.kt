@@ -1,6 +1,7 @@
 package com.jarvis.mobile.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,8 +66,12 @@ fun HomeScreen(openTab: (String) -> Unit) {
     val context = LocalContext.current
     val container = JarvisApp.instance.container
     val agentState by AgentEngine.state.collectAsState()
+    val loadState by container.modelManager.loadState.collectAsState()
     var input by remember { mutableStateOf("") }
     var voiceHint by remember { mutableStateOf("") }
+
+    val loadedModelId = (loadState as? com.jarvis.mobile.core.model.ModelManager.LoadState.Loaded)?.modelId
+        ?: (loadState as? com.jarvis.mobile.core.model.ModelManager.LoadState.Loading)?.modelId
 
     val speech = remember { SpeechInput(context) }
     val voiceEnabled by container.settings.voiceInput.collectAsState(initial = true)
@@ -97,11 +102,24 @@ fun HomeScreen(openTab: (String) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clickable { openTab(com.jarvis.mobile.ui.navigation.Dest.Models.route) },
+        ) {
             StatusChip(agentState.route, if (agentState.route == "LOCAL") com.jarvis.mobile.ui.components.ChipState.ACCENT else com.jarvis.mobile.ui.components.ChipState.NEUTRAL)
             Spacer(Modifier.width(8.dp))
-            val model = container.modelManager.llama.activeModel?.id
-            StatusChip(model ?: "no model loaded", if (model != null) com.jarvis.mobile.ui.components.ChipState.OK else com.jarvis.mobile.ui.components.ChipState.WARN)
+            StatusChip(
+                when {
+                    loadState is com.jarvis.mobile.core.model.ModelManager.LoadState.Loading && loadedModelId != null -> "loading $loadedModelId…"
+                    loadedModelId != null -> loadedModelId!!
+                    else -> "no model loaded - tap here"
+                },
+                when {
+                    loadedModelId != null -> com.jarvis.mobile.ui.components.ChipState.OK
+                    loadState is com.jarvis.mobile.core.model.ModelManager.LoadState.Loading -> com.jarvis.mobile.ui.components.ChipState.ACCENT
+                    else -> com.jarvis.mobile.ui.components.ChipState.WARN
+                },
+            )
         }
 
         Spacer(Modifier.height(26.dp))

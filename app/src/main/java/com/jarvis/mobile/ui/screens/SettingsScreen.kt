@@ -34,6 +34,7 @@ import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.service.OverlayService
 import com.jarvis.mobile.ui.components.SectionCard
 import com.jarvis.mobile.ui.components.StatusChip
+import com.jarvis.mobile.ui.theme.Accent
 import kotlinx.coroutines.launch
 
 /** Settings (spec: APP SETTINGS) - everything discoverable, nothing buried. */
@@ -55,6 +56,8 @@ fun SettingsScreen() {
     val maxActions by s.maxActions.collectAsState(initial = 12)
     val remoteUrl by s.remoteBaseUrl.collectAsState(initial = "")
     val remoteModel by s.remoteModel.collectAsState(initial = "")
+    val tgEnabled by s.telegramRemoteEnabled.collectAsState(initial = false)
+    val tgChatId by s.telegramChatId.collectAsState(initial = "")
     val clipboard = LocalClipboardManager.current
 
     Column(
@@ -90,6 +93,48 @@ fun SettingsScreen() {
                 }
             }
             StatusChip(if (localOnly) "no data leaves this device" else "remote fallback allowed", if (localOnly) com.jarvis.mobile.ui.components.ChipState.ACCENT else com.jarvis.mobile.ui.components.ChipState.WARN)
+        }
+
+        SectionCard("Telegram remote control") {
+            SettingToggle("Run tasks from Telegram", tgEnabled) { on ->
+                scope.launch {
+                    s.setTelegramRemoteEnabled(on)
+                    if (on) com.jarvis.mobile.core.remote.TelegramRemote.restart(context)
+                    else com.jarvis.mobile.core.remote.TelegramRemote.stop()
+                }
+            }
+            Text(
+                "Send tasks to this phone from anywhere via your own bot. Create a bot with @BotFather, paste its token here, and message it once to bind this chat. The token is stored in the encrypted vault.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            var tgToken by remember { mutableStateOf(container.vault.telegramBotToken) }
+            OutlinedTextField(
+                tgToken,
+                { tgToken = it },
+                label = { Text("Bot token from @BotFather") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    scope.launch {
+                        container.vault.telegramBotToken = tgToken.trim()
+                        if (tgEnabled) com.jarvis.mobile.core.remote.TelegramRemote.restart(context)
+                    }
+                }) { Text("Save token") }
+            }
+            if (tgChatId.isNotBlank()) {
+                Text("Bound chat id: $tgChatId", style = MaterialTheme.typography.labelMedium, color = Accent)
+                TextButton(onClick = {
+                    scope.launch {
+                        s.setTelegramChatId("")
+                        com.jarvis.mobile.core.remote.TelegramRemote.restart(context)
+                    }
+                }) { Text("Unbind chat (rebind on next message)") }
+            } else {
+                Text("No chat bound yet - send any message to your bot and it will bind automatically.", style = MaterialTheme.typography.labelMedium, color = Accent)
+            }
         }
 
         SectionCard("Appearance") {

@@ -47,8 +47,9 @@ fun DoctorScreen() {
     val container = JarvisApp.instance.container
     var refresh by remember { mutableIntStateOf(0) }
     val a11yConnected by JarvisAccessibilityService.CONNECTED.collectAsState()
+    val loadState by container.modelManager.loadState.collectAsState()
 
-    val checks: List<Pair<String, CheckState>> = remember(refresh, a11yConnected) {
+    val checks: List<Pair<String, CheckState>> = remember(refresh, a11yConnected, loadState) {
         val p = container.profiler.profile()
         listOf(
             "Accessibility service" to run {
@@ -57,8 +58,14 @@ fun DoctorScreen() {
             },
             "Local model" to run {
                 val active = container.modelManager.llama.activeModel
-                if (container.modelManager.llama.isReady() && active != null) CheckState.Ok
-                else CheckState.Fix("No model loaded - download one in the Models tab")
+                when {
+                    loadState is com.jarvis.mobile.core.model.ModelManager.LoadState.Loading ->
+                        CheckState.Degraded("Loading model into memory - this finishes in under a minute")
+                    container.modelManager.llama.isReady() && active != null -> CheckState.Ok
+                    loadState is com.jarvis.mobile.core.model.ModelManager.LoadState.Failed ->
+                        CheckState.Fix("Last activation failed - open the Models tab for the reason and retry")
+                    else -> CheckState.Fix("No model loaded - download one in the Models tab")
+                }
             },
             "Inference runtime" to run {
                 runCatching { com.jarvis.mobile.core.model.LlamaBridge.nativeIsLoaded() }

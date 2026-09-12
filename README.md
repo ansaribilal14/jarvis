@@ -29,6 +29,22 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
 (~25-35 MB); model files are downloaded separately inside the app.
 
+## What's new in v1.1.0
+
+- **Model activation, fixed and rebuilt.** The Activate button now shows live feedback:
+  progress while the model loads into memory, an ACTIVE chip the moment it is ready, and a
+  clear reason if activation fails (out of RAM, corrupted file, missing file). Checksum
+  verification no longer runs on the UI thread, double-taps are guarded, and a finished
+  download auto-activates the model — one tap from download to ready.
+- **Import your own .gguf models.** Imported files are listed and activatable.
+- **Telegram remote control** (adapted from the [MobileAgent](https://github.com/Bilal140202/MobileAgent)
+  demo): create a bot with @BotFather, paste the token in Settings → Telegram remote control,
+  message the bot once to bind your chat, then run tasks from anywhere with plain text,
+  `/status` and `/stop`. The token is stored in the encrypted vault and only your bound chat
+  can issue commands.
+- Onboarding now explains the Android 13+ "Allow restricted settings" accessibility quirk
+  and auto-advances when the model is live.
+
 ## What JARVIS can actually do
 
 | Capability | How it works |

@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -36,6 +38,27 @@ class ModelManager(
         data class Failed(val reason: String) : DownloadState()
     }
 
+    /**
+     * Reactive model-load lifecycle. The UI collects [loadState] so activation
+     * is always visible: Loading (with feedback), Loaded (chip switches to
+     * ACTIVE) or Failed (reason shown). Fixes the "Activate button does
+     * nothing" bug - the previous UI read a non-reactive volatile field.
+     */
+    sealed class LoadState {
+        data object Idle : LoadState()
+        data class Loading(val modelId: String) : LoadState()
+        data class Loaded(val modelId: String) : LoadState()
+        data class Failed(val modelId: String?, val reason: String) : LoadState()
+        val loadedModelId: String? get() = (this as? Loaded)?.modelId
+    }
+
+    private val _loadState = MutableStateFlow<LoadState>(LoadState.Idle)
+    val loadState: StateFlow<LoadState> = _loadState
+
+    /** Serializes every activation; also rejects re-entrant taps while a load is running. */
+    private val loadMutex = Mutex()
+    @Volatile private var loadingModelId: String? = null
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = HashMap<String, Job>()
     private val pauseFlags = HashMap<String, java.util.concurrent.atomic.AtomicBoolean>()
@@ -53,25 +76,93 @@ class ModelManager(
 
     fun importedFiles(): List<File> = modelsDir().listFiles { f -> f.extension.equals("gguf", true) }?.toList() ?: emptyList()
 
-    fun activeId(): String? = llama.activeModel?.id
-
-    fun isModelActive(m: ModelCatalog.CatalogModel): Boolean = llama.activeModel?.fileName == m.fileName
-
-    suspend fun selectAndLoad(m: ModelCatalog.CatalogModel): Boolean {
-        val snap = settings.snapshot()
-        val file = fileFor(m)
-        if (!file.exists()) return false
-        if (m.sha256.isNotBlank() && !verifyChecksum(file, m.sha256)) {
-            Logx.e(TAG, "Checksum mismatch for ${m.id} - refusing to load")
-            _states.value = _states.value + (m.id to DownloadState.Failed("Checksum mismatch - file may be corrupted. Delete and re-download."))
-            return false
+    /**
+     * Imported .gguf files as activatable catalog entries (no pinned checksum,
+     * conservative context). Lets users run their own models end-to-end.
+     */
+    fun importedModels(): List<ModelCatalog.CatalogModel> = importedFiles()
+        .filter { it.length() > 0 }
+        .map { f ->
+            ModelCatalog.CatalogModel(
+                id = "imported:${f.name}",
+                repo = "local import",
+                fileName = f.name,
+                url = "",
+                sizeBytes = f.length(),
+                sha256 = "",
+                params = "?",
+                quant = "imported",
+                contextTrain = 4096,
+                ramNeededGb = f.length() / 1024.0 / 1024.0 / 1024.0 * 1.3 + 0.5,
+                minDeviceClass = DeviceProfiler.DeviceClass.BASIC,
+                template = ModelCatalog.ChatTemplate.PLAIN,
+                strengths = "User-imported GGUF model stored on this device.",
+            )
         }
-        val ok = llama.load(m, file, snap.contextSize.coerceAtMost(4096), snap.inferenceThreads)
-        if (ok) settings.setActiveModelId(m.id)
-        return ok
+
+    fun activeId(): String? = _loadState.value.loadedModelId ?: llama.activeModel?.id
+
+    fun isModelActive(m: ModelCatalog.CatalogModel): Boolean =
+        _loadState.value.loadedModelId == m.id || llama.activeModel?.fileName == m.fileName
+
+    /** True while a model is being loaded into the native runtime (UI shows progress + disables buttons). */
+    fun isLoading(): Boolean = _loadState.value is LoadState.Loading
+
+    /**
+     * Activate a downloaded model. Fully IO-bound (checksum hashing of multi-GB
+     * files used to run on the caller's Main dispatcher and froze the app),
+     * mutex-guarded against double taps, and always reports its outcome via
+     * [loadState] so the UI can react.
+     */
+    suspend fun selectAndLoad(m: ModelCatalog.CatalogModel): Boolean = withContext(Dispatchers.IO) {
+        loadMutex.withLock {
+            if (_loadState.value is LoadState.Loading) {
+                Logx.w(TAG, "Load already in progress (${loadingModelId}) - ignoring request for ${m.id}")
+                return@withLock false
+            }
+            _loadState.value = LoadState.Loading(m.id)
+            loadingModelId = m.id
+            try {
+                val file = fileFor(m)
+                if (!file.exists() || file.length() == 0L) {
+                    Logx.e(TAG, "Activate ${m.id}: file missing")
+                    _loadState.value = LoadState.Failed(m.id, "Model file not found on device - download it first.")
+                    return@withLock false
+                }
+                if (m.sha256.isNotBlank() && !verifyChecksum(file, m.sha256)) {
+                    Logx.e(TAG, "Checksum mismatch for ${m.id} - refusing to load")
+                    _states.value = _states.value + (m.id to DownloadState.Failed("Checksum mismatch - file may be corrupted. Delete and re-download."))
+                    _loadState.value = LoadState.Failed(m.id, "Checksum mismatch - file may be corrupted. Delete and re-download.")
+                    return@withLock false
+                }
+                val snap = settings.snapshot()
+                val ok = llama.load(m, file, snap.contextSize.coerceAtMost(4096), snap.inferenceThreads)
+                if (ok) {
+                    settings.setActiveModelId(m.id)
+                    lastGenerationAt = System.currentTimeMillis()
+                    _loadState.value = LoadState.Loaded(m.id)
+                    Logx.i(TAG, "Activated ${m.id}")
+                } else {
+                    _loadState.value = LoadState.Failed(
+                        m.id,
+                        "Could not load this model (not enough free RAM or unsupported file). Try a smaller model, or lower the context size in Settings.",
+                    )
+                }
+                ok
+            } catch (t: Throwable) {
+                Logx.e(TAG, "Activate ${m.id} crashed: ${t.message}")
+                _loadState.value = LoadState.Failed(m.id, t.message ?: "Activation failed unexpectedly.")
+                false
+            } finally {
+                loadingModelId = null
+            }
+        }
     }
 
-    fun unload() = llama.unload()
+    fun unload() {
+        llama.unload()
+        if (_loadState.value !is LoadState.Loading) _loadState.value = LoadState.Idle
+    }
 
     /** Idle unloader: battery management (spec: BATTERY MANAGEMENT). */
     fun startIdleWatchdog() {
@@ -83,7 +174,8 @@ class ModelManager(
                 if (llama.isReady()) {
                     // LlamaCppProvider tracks lastUsed internally via generation calls.
                     if (System.currentTimeMillis() - lastGenerationAt > min * 60_000L) {
-                        llama.unload()
+                        unload()
+                        Logx.i(TAG, "Idle watchdog unloaded the model")
                     }
                 }
             }
@@ -161,6 +253,10 @@ class ModelManager(
                 }
                 _states.value = _states.value + (m.id to DownloadState.Done)
                 Logx.i(TAG, "Downloaded+verified ${m.id}")
+                // One-tap flow: activate right away so the user never has to
+                // find a second button after waiting for a multi-GB download.
+                // Failures are surfaced through loadState, not thrown.
+                selectAndLoad(m)
             } catch (t: Throwable) {
                 Logx.e(TAG, "Download ${m.id} failed: ${t.message}")
                 _states.value = _states.value + (m.id to DownloadState.Failed(t.message ?: "Download failed"))
@@ -186,7 +282,10 @@ class ModelManager(
 
     fun delete(m: ModelCatalog.CatalogModel) {
         cancel(m)
-        if (llama.activeModel?.id == m.id) llama.unload()
+        if (llama.activeModel?.id == m.id || _loadState.value.loadedModelId == m.id) {
+            llama.unload()
+            if (_loadState.value !is LoadState.Loading) _loadState.value = LoadState.Idle
+        }
         fileFor(m).delete()
         _states.value = _states.value + (m.id to DownloadState.Idle)
     }
@@ -210,7 +309,7 @@ class ModelManager(
             }
             Logx.i(TAG, "Imported model $name (${target.length() / 1024 / 1024} MB)")
             target
-        }.recoverCatching { throw it }
+        }.onFailure { Logx.e(TAG, "Import failed: ${it.message}") }
     }
 
     private fun queryDisplayName(uri: android.net.Uri): String? = runCatching {

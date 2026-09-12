@@ -29,7 +29,13 @@ class SecureVault(context: Context) {
         get() = prefs.getString(KEY_REMOTE_API_KEY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_REMOTE_API_KEY, value).apply()
 
+    /** Telegram bot token for the optional remote-control channel (kept encrypted). */
+    var telegramBotToken: String
+        get() = prefs.getString(KEY_TELEGRAM_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_TELEGRAM_TOKEN, value).apply()
+
     companion object {
         private const val KEY_REMOTE_API_KEY = "remote_api_key"
+        private const val KEY_TELEGRAM_TOKEN = "telegram_bot_token"
     }
 }

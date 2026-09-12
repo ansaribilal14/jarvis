@@ -11,14 +11,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,7 +40,7 @@ import com.jarvis.mobile.ui.components.StatusChip
 import com.jarvis.mobile.ui.theme.Accent
 import kotlinx.coroutines.launch
 
-/** Model manager UI (spec: MODEL MANAGER / MODEL UI). */
+/** Model manager UI (spec: MODEL MANAGER / MODEL UI). Fully reactive to load lifecycle. */
 @Composable
 fun ModelsScreen() {
     val context = LocalContext.current
@@ -49,11 +49,22 @@ fun ModelsScreen() {
     val profile by remember { mutableStateOf(container.profiler.profile()) }
     val recommended = remember { ModelCatalog.recommendFor(profile) }
     val downloadStates by container.modelManager.states.collectAsState()
-    val activeModelId by container.settings.activeModelId.collectAsState(initial = null)
+    val loadState by container.modelManager.loadState.collectAsState()
     var benchmarkResult by remember { mutableStateOf<Double?>(null) }
+    var importMessage by remember { mutableStateOf<String?>(null) }
+
+    val loadingModelId = (loadState as? ModelManager.LoadState.Loading)?.modelId
+    val activeModelId = (loadState as? ModelManager.LoadState.Loaded)?.modelId
+    val loadError = (loadState as? ModelManager.LoadState.Failed)
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch { container.modelManager.import(uri) }
+        if (uri != null) scope.launch {
+            val res = container.modelManager.import(uri)
+            importMessage = res.fold(
+                onSuccess = { "Imported ${it.name} - find it under Imported models below." },
+                onFailure = { "Import failed: ${it.message}" },
+            )
+        }
     }
 
     Column(
@@ -70,11 +81,31 @@ fun ModelsScreen() {
             Text("Thermal: ${profile.thermalStatus} · Vulkan: ${if (profile.vulkan) "yes" else "no"}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
+        if (loadingModelId != null) {
+            SectionCard("Activating model") {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), color = Accent, strokeWidth = 2.dp)
+                    Text(
+                        "Loading $loadingModelId into memory… first activation can take up to a minute. The app may look quiet while the model is read - do not close it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+
+        loadError?.let { err ->
+            SectionCard("Activation problem") {
+                Text(err.reason, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+
         SectionCard("Recommended") {
             ModelCard(
                 model = recommended,
                 state = downloadStates[recommended.id] ?: ModelManager.DownloadState.Idle,
-                isActive = container.modelManager.isModelActive(recommended),
+                isActive = activeModelId == recommended.id || container.modelManager.isModelActive(recommended),
+                isBusy = loadingModelId != null,
+                busyHere = loadingModelId == recommended.id,
                 isDownloaded = container.modelManager.isDownloaded(recommended),
                 recommendedTag = "Recommended for your device",
                 onDownload = { container.modelManager.download(recommended) },
@@ -91,7 +122,9 @@ fun ModelsScreen() {
                 ModelCard(
                     model = m,
                     state = downloadStates[m.id] ?: ModelManager.DownloadState.Idle,
-                    isActive = container.modelManager.isModelActive(m),
+                    isActive = activeModelId == m.id || container.modelManager.isModelActive(m),
+                    isBusy = loadingModelId != null,
+                    busyHere = loadingModelId == m.id,
                     isDownloaded = container.modelManager.isDownloaded(m),
                     recommendedTag = null,
                     onDownload = { container.modelManager.download(m) },
@@ -103,17 +136,47 @@ fun ModelsScreen() {
                 )
                 Spacer(Modifier.height(4.dp))
             }
+            importMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = Accent)
+            }
             TextButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) { Text("Import a .gguf file…") }
         }
 
+        val imported = remember(importMessage, loadState) { container.modelManager.importedModels() }
+        if (imported.isNotEmpty()) {
+            SectionCard("Imported models") {
+                imported.forEach { m ->
+                    ModelCard(
+                        model = m,
+                        state = downloadStates[m.id] ?: ModelManager.DownloadState.Idle,
+                        isActive = activeModelId == m.id || container.modelManager.isModelActive(m),
+                        isBusy = loadingModelId != null,
+                        busyHere = loadingModelId == m.id,
+                        isDownloaded = true,
+                        recommendedTag = null,
+                        onDownload = {},
+                        onPause = {},
+                        onResume = {},
+                        onCancel = {},
+                        onActivate = { scope.launch { container.modelManager.selectAndLoad(m) } },
+                        onDelete = { container.modelManager.delete(m) },
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+        }
+
         SectionCard("Benchmark") {
-            if (container.modelManager.llama.isReady()) {
-                Text("Active: ${container.modelManager.llama.activeModel?.id}", style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = {
-                    scope.launch {
-                        benchmarkResult = container.modelManager.benchmarkActive().getOrNull()
-                    }
-                }) { Text("Measure generation speed") }
+            if (container.modelManager.llama.isReady() || activeModelId != null) {
+                Text("Active: ${activeModelId ?: container.modelManager.llama.activeModel?.id}", style = MaterialTheme.typography.bodyMedium)
+                Button(
+                    onClick = {
+                        scope.launch {
+                            benchmarkResult = container.modelManager.benchmarkActive().getOrNull()
+                        }
+                    },
+                    enabled = loadingModelId == null,
+                ) { Text("Measure generation speed") }
                 benchmarkResult?.let {
                     Text("%.1f tokens/second (measured on this device)".format(it), style = MaterialTheme.typography.bodyMedium, color = Accent)
                 }
@@ -130,6 +193,8 @@ private fun ModelCard(
     model: ModelCatalog.CatalogModel,
     state: ModelManager.DownloadState,
     isActive: Boolean,
+    isBusy: Boolean,
+    busyHere: Boolean,
     isDownloaded: Boolean,
     recommendedTag: String?,
     onDownload: () -> Unit,
@@ -143,10 +208,10 @@ private fun ModelCard(
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(model.id, style = MaterialTheme.typography.titleMedium)
             if (isActive) StatusChip("ACTIVE", com.jarvis.mobile.ui.components.ChipState.ACCENT)
-            if (model.minDeviceClass == DeviceProfiler.DeviceClass.BASIC) StatusChip("light", com.jarvis.mobile.ui.components.ChipState.NEUTRAL)
+            if (model.minDeviceClass == DeviceProfiler.DeviceClass.BASIC && !model.id.startsWith("imported:")) StatusChip("light", com.jarvis.mobile.ui.components.ChipState.NEUTRAL)
         }
         recommendedTag?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Accent) }
-        Text("${model.params} · ${model.quant} · ${model.sizeMb} MB · RAM ≈ ${model.ramNeededGb} GB · ctx ${model.contextTrain / 1024}k", style = MaterialTheme.typography.bodyMedium)
+        Text("${model.params} · ${model.quant} · ${model.sizeMb} MB · RAM ≈ ${"%.1f".format(model.ramNeededGb)} GB · ctx ${model.contextTrain / 1024}k", style = MaterialTheme.typography.bodyMedium)
         Text(model.strengths, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         when (state) {
@@ -173,10 +238,17 @@ private fun ModelCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (isDownloaded) {
                         StatusChip("on device", com.jarvis.mobile.ui.components.ChipState.OK)
-                        if (!isActive) Button(onClick = onActivate) { Text("Activate") }
-                        OutlinedButton(onClick = onDelete) { Text("Delete") }
+                        when {
+                            busyHere -> {
+                                CircularProgressIndicator(Modifier.size(22.dp), color = Accent, strokeWidth = 2.dp)
+                                Text("Loading…", style = MaterialTheme.typography.labelMedium, color = Accent)
+                            }
+                            isActive -> StatusChip("ready", com.jarvis.mobile.ui.components.ChipState.OK)
+                            else -> Button(onClick = onActivate, enabled = !isBusy) { Text("Activate") }
+                        }
+                        OutlinedButton(onClick = onDelete, enabled = !isBusy) { Text("Delete") }
                     } else {
-                        Button(onClick = onDownload) { Text("Download") }
+                        Button(onClick = onDownload, enabled = !isBusy) { Text("Download") }
                     }
                 }
             }

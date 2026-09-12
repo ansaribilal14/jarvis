@@ -10,6 +10,7 @@ import com.jarvis.mobile.core.model.DeviceProfiler
 import com.jarvis.mobile.core.model.ModelManager
 import com.jarvis.mobile.core.model.RemoteOpenAiProvider
 import com.jarvis.mobile.core.notifications.NotificationCache
+import com.jarvis.mobile.core.remote.TelegramRemote
 import com.jarvis.mobile.core.routines.RoutineManager
 import com.jarvis.mobile.core.tools.ToolRegistry
 import com.jarvis.mobile.core.tools.impl.buildToolSet
@@ -17,6 +18,10 @@ import com.jarvis.mobile.core.voice.VoiceOutput
 import com.jarvis.mobile.data.db.AppDatabase
 import com.jarvis.mobile.data.settings.SecureVault
 import com.jarvis.mobile.data.settings.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /** Application entry + tiny manual DI container (justified: single-process app, low count of singletons). */
 class JarvisApp : Application() {
@@ -55,6 +60,13 @@ class JarvisApp : Application() {
         createChannels()
         ToolRegistry.registerAll(buildToolSet(container))
         AgentEngine.init(container)
+        // Telegram remote control (adapted from the user's MobileAgent demo):
+        // starts only when the user enabled it in Settings.
+        CoroutineScope(Dispatchers.Default).launch {
+            if (runCatching { container.settings.telegramRemoteEnabled.first() }.getOrDefault(false)) {
+                TelegramRemote.start(this@JarvisApp)
+            }
+        }
     }
 
     private fun createChannels() {

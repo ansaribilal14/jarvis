@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -28,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -62,8 +64,17 @@ fun OnboardingScreen(onDone: () -> Unit) {
     val profile by remember { mutableStateOf(container.profiler.profile()) }
     val recommended = remember { ModelCatalog.recommendFor(profile) }
     val downloadStates by container.modelManager.states.collectAsState()
+    val loadState by container.modelManager.loadState.collectAsState()
     val a11y by JarvisAccessibilityService.CONNECTED.collectAsState()
-    val activeModelId by container.settings.activeModelId.collectAsState(initial = null)
+
+    val loadingModelId = (loadState as? ModelManager.LoadState.Loading)?.modelId
+    val activeModelId = (loadState as? ModelManager.LoadState.Loaded)?.modelId
+    val loadError = loadState as? ModelManager.LoadState.Failed
+
+    // Auto-advance once the recommended model is live - setup feels done, not stuck.
+    LaunchedEffect(activeModelId) {
+        if (activeModelId != null && step == 2) step = 3
+    }
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -128,17 +139,31 @@ fun OnboardingScreen(onDone: () -> Unit) {
                                 Text("Verifying SHA-256…", style = MaterialTheme.typography.labelMedium)
                             }
                             is ModelManager.DownloadState.Done -> {
-                                StatusChip("Downloaded & verified", com.jarvis.mobile.ui.components.ChipState.OK)
-                                TextButton(onClick = {
-                                    scope.launch { container.modelManager.selectAndLoad(recommended) }
-                                }) { Text("Activate") }
+                                when {
+                                    loadingModelId == recommended.id -> {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            CircularProgressIndicator(Modifier.size(20.dp), color = Accent, strokeWidth = 2.dp)
+                                            Text("Activating… first load can take up to a minute.", style = MaterialTheme.typography.bodyMedium, color = Accent)
+                                        }
+                                    }
+                                    activeModelId == recommended.id -> StatusChip("Active - you are set", com.jarvis.mobile.ui.components.ChipState.OK)
+                                    else -> {
+                                        StatusChip("Downloaded & verified", com.jarvis.mobile.ui.components.ChipState.OK)
+                                        TextButton(onClick = {
+                                            scope.launch { container.modelManager.selectAndLoad(recommended) }
+                                        }) { Text("Activate") }
+                                    }
+                                }
                             }
                             is ModelManager.DownloadState.Failed -> Text(st.reason, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                             ModelManager.DownloadState.Idle -> {}
                         }
+                        loadError?.takeIf { it.modelId == recommended.id }?.let { err ->
+                            Text(err.reason, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (st == ModelManager.DownloadState.Idle) {
-                                Button(onClick = { container.modelManager.download(recommended) }) { Text("Download model") }
+                                Button(onClick = { container.modelManager.download(recommended) }, enabled = loadingModelId == null) { Text("Download model") }
                             }
                             OutlinedButton(onClick = { step = 3 }) { Text("Skip for now") }
                         }
@@ -155,6 +180,13 @@ fun OnboardingScreen(onDone: () -> Unit) {
                         if (!a11y) {
                             TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Open settings") }
                         }
+                    }
+                    if (!a11y) {
+                        Text(
+                            "On Android 13+ sideloaded apps can show the toggle as blocked: open App Info → ⋮ → Allow restricted settings, then enable JARVIS again.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
