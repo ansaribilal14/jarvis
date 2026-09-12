@@ -20,7 +20,7 @@ import java.net.URLEncoder
 
 /**
  * Media, navigation, alarm and system-action tools with JARVIS's honest
- * result model: every tool reports what ACTUALLY happened, never fake success).
+ * result model: every tool reports what ACTUALLY happened, never fake success.
  */
 class OpenUrlTool : Tool(
     ToolSpec(
@@ -30,7 +30,7 @@ class OpenUrlTool : Tool(
     ),
 ) {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        var url = T.str(args, "url")?.trim ?: return ToolResult.fail("Missing required arg: url.")
+        var url = T.str(args, "url")?.trim() ?: return ToolResult.fail("Missing required arg: url.")
         if (url.startsWith("javascript:")) return ToolResult.fail("Refusing non-web URL.")
         if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -129,7 +129,7 @@ class SetTimerTool : Tool(
 }
 
 class MediaPlayPauseTool : Tool(
-    ToolSpec("media_play_pause", "Toggle play/pause on the current media session.", emptyList, com.jarvis.mobile.core.tools.Risk.LOW),
+    ToolSpec("media_play_pause", "Toggle play/pause on the current media session.", emptyList(), com.jarvis.mobile.core.tools.Risk.LOW),
 ) {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val am = JarvisApp.instance.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -142,7 +142,7 @@ class MediaPlayPauseTool : Tool(
 }
 
 class TakeScreenshotTool : Tool(
-    ToolSpec("take_screenshot", "Take a screenshot of the current screen (saved by the system).", emptyList, com.jarvis.mobile.core.tools.Risk.LOW),
+    ToolSpec("take_screenshot", "Take a screenshot of the current screen (saved by the system).", emptyList(), com.jarvis.mobile.core.tools.Risk.LOW),
 ) {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         if (Build.VERSION.SDK_INT < 30) {

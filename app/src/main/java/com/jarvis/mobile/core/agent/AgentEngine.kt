@@ -50,7 +50,7 @@ data class AgentEvent(
 data class AgentUiState(
     val status: AgentStatus = AgentStatus.IDLE,
     val goal: String = "",
-    val steps: List<StepUi> = emptyList,
+    val steps: List<StepUi> = emptyList(),
     val activeTool: String? = null,
     val currentApp: String? = null,
     val route: String = "LOCAL",
@@ -63,7 +63,7 @@ data class AgentUiState(
     val stepIndex: Int = 0,
     val stepBudget: Int = 0,
     val thinkingDetail: String? = null,
-    val events: List<AgentEvent> = emptyList,
+    val events: List<AgentEvent> = emptyList(),
 )
 
 enum class AgentStatus { IDLE, THINKING, ACTING, VERIFYING, WAITING_CONFIRMATION, COMPLETED, FAILED, STOPPED }
@@ -79,9 +79,9 @@ object AgentEngine {
     private lateinit var c: JarvisApp.Container
     private lateinit var router: ModelRouter
 
-    private val _state = MutableStateFlow(AgentUiState)
+    private val _state = MutableStateFlow(AgentUiState())
     val state: StateFlow<AgentUiState> = _state
-    private val stateLock = Any
+    private val stateLock = Any()
 
     /** Single serialized state writer - prevents ticker/loop/event lost-update races. */
     private fun commit(f: (AgentUiState) -> AgentUiState) {
@@ -97,14 +97,14 @@ object AgentEngine {
     @Volatile private var slowWarned = false
 
     /** Live activity feed for the running task (member-level so all phases can log). */
-    private val taskEvents = mutableListOf<AgentEvent>
+    private val taskEvents = mutableListOf<AgentEvent>()
     @Volatile private var taskStartMs = 0L
 
     private fun event(text: String, kind: String = "info") {
         synchronized(stateLock) {
-            taskEvents.add(AgentEvent(System.currentTimeMillis, System.currentTimeMillis - taskStartMs, text, kind))
+            taskEvents.add(AgentEvent(System.currentTimeMillis(), System.currentTimeMillis() - taskStartMs, text, kind))
             if (taskEvents.size > 60) taskEvents.removeAt(0)
-            _state.value = _state.value.copy(events = taskEvents.toList)
+            _state.value = _state.value.copy(events = taskEvents.toList())
         }
         Logx.i(TAG, "event[$kind] $text")
     }
@@ -129,16 +129,16 @@ object AgentEngine {
             }
         }
         // Idle model unloader for battery management.
-        c.modelManager.startIdleWatchdog
+        c.modelManager.startIdleWatchdog()
     }
 
-    fun isRunning: Boolean = job?.isActive == true
+    fun isRunning(): Boolean = job?.isActive == true
 
-    fun stop {
+    fun stop() {
         stopped = true
-        router.cancelLocal
-        ConfirmationManager.cancelAll
-        job?.cancel
+        router.cancelLocal()
+        ConfirmationManager.cancelAll()
+        job?.cancel()
         commit {
             it.copy(
                 status = AgentStatus.STOPPED,
@@ -148,13 +148,13 @@ object AgentEngine {
         }
         Logx.w(TAG, "Agent STOPPED by user")
         c.voiceOutput.speak("Stopped.")
-        com.jarvis.mobile.service.AgentForegroundService.stopAll
+        com.jarvis.mobile.service.AgentForegroundService.stopAll()
     }
 
     fun answerConfirmation(id: String, approved: Boolean) = ConfirmationManager.answer(id, approved)
 
     fun runGoal(goal: String, source: String = "TEXT") {
-        if (isRunning) {
+        if (isRunning()) {
             Logx.w(TAG, "Task requested while busy: ignored (stop first)")
             return
         }
@@ -175,7 +175,7 @@ object AgentEngine {
 
     /** Strict whole-utterance matcher: ONLY pure notification-reading requests bypass the AI. */
     private fun isDirectNotificationRequest(goal: String): Boolean {
-        val g = goal.trim.lowercase(Locale.US).removeSuffix("?").replace("!", "").trim
+        val g = goal.trim().lowercase(Locale.US).removeSuffix("?").replace("!", "").trim()
         if (g.length > 48) return false // anything longer has extra clauses -> normal agent path
         return Regex(
             "^(please |jarvis |can you |could you )*(read|show|check|list|see|get|pull|any|what are|what's|whats)" +
@@ -195,22 +195,22 @@ object AgentEngine {
         diverged = false
         slowWarned = false
         job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-            val startMs = System.currentTimeMillis
+            val startMs = System.currentTimeMillis()
             taskStartMs = startMs
-            synchronized(stateLock) { taskEvents.clear }
+            synchronized(stateLock) { taskEvents.clear() }
             val taskId = c.memory.startTask(goal, source)
             c.memory.addChat("USER", goal, taskId)
             val ticker = launch {
                 while (isActive) {
                     delay(1000)
-                    commit { it.copy(elapsedMs = System.currentTimeMillis - startMs) }
+                    commit { it.copy(elapsedMs = System.currentTimeMillis() - startMs) }
                 }
             }
             commit {
                 it.copy(
                     status = AgentStatus.THINKING, goal = goal, finalResponse = null, route = "DIRECT",
                     startedAtMs = startMs, elapsedMs = 0, stepIndex = 1, stepBudget = 1,
-                    thinkingDetail = null, events = emptyList, confirmation = null,
+                    thinkingDetail = null, events = emptyList(), confirmation = null,
                 )
             }
             event("Direct request - no AI needed, reading notifications now", "ok")
@@ -218,11 +218,11 @@ object AgentEngine {
             val tool = ToolRegistry.get("read_notifications")
             val result = if (tool == null) ToolResult.fail("Notification reader unavailable.")
             else withTimeoutOrNull(10_000) {
-                tool.execute(kotlinx.serialization.json.JsonObject(emptyMap), ToolContext(null))
+                tool.execute(kotlinx.serialization.json.JsonObject(emptyMap()), ToolContext(null))
             } ?: ToolResult.fail("Reading notifications timed out.")
             val response = buildString {
                 append(result.message)
-                if (!result.detail.isNullOrBlank) {
+                if (!result.detail.isNullOrBlank()) {
                     append("\n")
                     append(result.detail)
                 }
@@ -236,32 +236,32 @@ object AgentEngine {
                     status = if (ok) AgentStatus.COMPLETED else AgentStatus.FAILED,
                     finalResponse = response,
                     thinkingDetail = null,
-                    elapsedMs = System.currentTimeMillis - startMs,
+                    elapsedMs = System.currentTimeMillis() - startMs,
                 )
             }
             event(if (ok) "Notifications read directly (no AI)" else "Could not read notifications", if (ok) "ok" else "err")
             c.memory.finishTask(taskId, if (ok) "COMPLETED" else "FAILED", response.take(300), 1)
             c.memory.addChat("JARVIS", response, taskId)
             c.voiceOutput.speak(response.take(180))
-            ticker.cancel
+            ticker.cancel()
         }
     }
 
     // ------------------------------------------------------------------ loop
 
     private suspend fun execute(goal: String, source: String) = coroutineScope {
-        val startMs = System.currentTimeMillis
+        val startMs = System.currentTimeMillis()
         taskStartMs = startMs
-        synchronized(stateLock) { taskEvents.clear }
+        synchronized(stateLock) { taskEvents.clear() }
         val taskId = c.memory.startTask(goal, source)
         c.memory.addChat("USER", goal, taskId)
-        val rawMax = runCatching { c.settings.maxActions.first }.getOrDefault(12)
+        val rawMax = runCatching { c.settings.maxActions.first() }.getOrDefault(12)
         val unlimited = rawMax <= 0 // 0 (or negative) = unlimited; loop guards still protect the user
         val maxActions = if (unlimited) Int.MAX_VALUE else rawMax
         val budgetLabel = if (unlimited) "unlimited" else "max $rawMax"
         var actionsUsed = 0
-        val history = mutableListOf<Pair<PlannedAction, String>>
-        val steps = mutableListOf<StepUi>
+        val history = mutableListOf<Pair<PlannedAction, String>>()
+        val steps = mutableListOf<StepUi>()
 
         // Anti-repeat / anti-stuck state (v1.3).
         var lastSig: String? = null
@@ -271,7 +271,7 @@ object AgentEngine {
         var afterNote: String? = null
 
         fun update(f: (AgentUiState) -> AgentUiState) {
-            synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList) }
+            synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList()) }
         }
 
         // 1 Hz heartbeat: elapsed clock + live generation stats folded into the UI,
@@ -279,7 +279,7 @@ object AgentEngine {
         val ticker = launch {
             while (isActive) {
                 delay(1000)
-                val now = System.currentTimeMillis
+                val now = System.currentTimeMillis()
                 val st = _state.value
                 var detail: String? = null
                 if (st.status == AgentStatus.THINKING) {
@@ -305,7 +305,7 @@ object AgentEngine {
             it.copy(
                 status = AgentStatus.THINKING, goal = goal, finalResponse = null, route = "…",
                 startedAtMs = startMs, elapsedMs = 0, stepIndex = 0, stepBudget = if (unlimited) -1 else rawMax,
-                thinkingDetail = null, events = emptyList,
+                thinkingDetail = null, events = emptyList(),
             )
         }
         event("Task received: \"$goal\" (actions: $budgetLabel)", "ok")
@@ -319,19 +319,19 @@ object AgentEngine {
             // PLAN-FIRST: compound goals get a one-shot upfront
             // JSON plan, then every step still runs through the grounded loop
             // (real screen before every action - no blind plan execution).
-            var planSteps = ArrayDeque<PlannedAction>
+            var planSteps = ArrayDeque<PlannedAction>()
             var planTotal = 0
             runCatching {
-                val routeNow = router.decide
+                val routeNow = router.decide()
                 if (routeNow.route != ModelRouter.Route.RULES && source != "ROUTINE" && Planner.isCompoundGoal(goal)) {
                     event("Compound goal - drafting a plan first…")
                     val prompt = com.jarvis.mobile.core.model.PromptTemplates.render(
                         c.modelManager.llama.activeModel?.template
                             ?: com.jarvis.mobile.core.model.ModelCatalog.ChatTemplate.CHATML,
-                        Planner.planSystemPrompt(InjectionGuard.inspect(null), factsBlock),
+                        Planner.planSystemPrompt(InjectionGuard.inspect(null), factsBlock()),
                         Planner.planUserPrompt(goal),
                     )
-                    val steps = llmGenerate(prompt, maxTokens = 500)?.let { Planner.parsePlan(it) } ?: emptyList
+                    val steps = llmGenerate(prompt, maxTokens = 500)?.let { Planner.parsePlan(it) } ?: emptyList()
                     if (steps.size >= 2) {
                         planSteps = ArrayDeque(steps)
                         planTotal = steps.size
@@ -354,7 +354,7 @@ object AgentEngine {
                 }
                 if (JarvisAccessibilityService.isReady) {
                     screen = withTimeoutOrNull(2500) {
-                        JarvisAccessibilityService.INSTANCE?.observe
+                        JarvisAccessibilityService.INSTANCE?.observe()
                     }
                 }
                 if (screen == null) event("Accessibility observation unavailable (service off?)", "warn")
@@ -371,9 +371,9 @@ object AgentEngine {
                     if (repeatCount >= 1) add("You already tried this exact action ${repeatCount + 1} time(s) and it did not work. Choose a DIFFERENT approach or finish honestly.")
                     if (consecFails >= 2) add("$consecFails actions in a row failed. Re-read the <screen> block carefully and change strategy.")
                 }
-                val planNote = if (planSteps.isNotEmpty) {
-                    val cur = planSteps.first
-                    "step ${planTotal - planSteps.size + 1} of $planTotal: ${cur.tool}(${cur.args.toString.take(120)})"
+                val planNote = if (planSteps.isNotEmpty()) {
+                    val cur = planSteps.first()
+                    "step ${planTotal - planSteps.size + 1} of $planTotal: ${cur.tool}(${cur.args.toString().take(120)})"
                 } else null
                 val decision = decide(goal, screen, history, suspicion, actionsUsed, budgetLabel, stepWarnings, afterNote, planNote)
                 update { it.copy(route = decision.routeName) }
@@ -402,18 +402,18 @@ object AgentEngine {
                 event("Planned: ${action.tool}", "model")
 
                 // Loop guard: identical action (tool + args) repeated = the model is guessing.
-                val sig = action.tool + ":" + action.args.toString
+                val sig = action.tool + ":" + action.args.toString()
                 if (sig == lastSig) repeatCount++ else { repeatCount = 0; lastSig = sig }
                 if (repeatCount >= 3) {
                     finalResponse = "I repeated the same action (\"${action.tool}\") ${repeatCount + 1} times without progress, " +
-                        "so I stopped to avoid looping forever. Last result: ${history.lastOrNull?.second?.take(140) ?: "none"}."
+                        "so I stopped to avoid looping forever. Last result: ${history.lastOrNull()?.second?.take(140) ?: "none"}."
                     event("Loop guard: same action kept repeating - stopped honestly", "err")
                     break
                 }
                 if (repeatCount >= 1) event("Repeat guard: same action as last step (attempt ${repeatCount + 1})", "warn")
 
                 val tool = ToolRegistry.get(action.tool)
-                if (tool == null || !tool.available) {
+                if (tool == null || !tool.available()) {
                     finalResponse = "The action \"${action.tool}\" is not available right now (missing permission or service)."
                     history.add(action to "BLOCKED: tool unavailable")
                     steps.add(StepUi(steps.size + 1, action.tool, action.tool, "BLOCKED"))
@@ -424,7 +424,7 @@ object AgentEngine {
 
                 // 3. SAFETY / CONFIRMATION -----------------------------------
                 val risk = RiskClassifier.classify(tool.spec, action.args, screen?.packageName)
-                val autoApprove = runCatching { c.settings.autoApproveMedium.first }.getOrDefault(false)
+                val autoApprove = runCatching { c.settings.autoApproveMedium.first() }.getOrDefault(false)
                 val needsConfirm = RiskClassifier.requiresConfirmation(risk, autoApprove) &&
                     source != "ROUTINE" // routines run only LOW-risk tools anyway
                 if (needsConfirm) {
@@ -432,7 +432,7 @@ object AgentEngine {
                     val approved = ConfirmationManager.request(
                         what = "Run \"${tool.spec.name}\"",
                         target = screen?.packageName ?: "system",
-                        details = action.args.toString.take(220),
+                        details = action.args.toString().take(220),
                         why = RiskClassifier.whyConfirmation(tool.spec, risk, action.args),
                         risk = risk.name,
                     )
@@ -470,7 +470,7 @@ object AgentEngine {
                 update { it.copy(status = AgentStatus.VERIFYING) }
                 val verdict = Verifier.verify(action, result)
                 Verifier.logStep(steps.size, action, verdict)
-                steps[steps.size - 1] = steps.last.copy(
+                steps[steps.size - 1] = steps.last().copy(
                     status = when (result.status) {
                         ToolStatus.SUCCESS -> "SUCCESS"
                         ToolStatus.FAILED -> "FAILED"
@@ -488,14 +488,14 @@ object AgentEngine {
                     },
                     if (result.status == ToolStatus.SUCCESS) "ok" else "err",
                 )
-                c.memory.addStep(taskId, steps.size, action.tool, action.args.toString, steps.last.status, result.message, verdict)
+                c.memory.addStep(taskId, steps.size, action.tool, action.args.toString(), steps.last().status, result.message, verdict)
                 history.add(action to verdict)
 
                 // Plan progression: consume the current plan step; if the model
                 // deviated from the planned tool, that is an adaptation - keep
                 // the remaining plan but say so honestly.
-                if (planSteps.isNotEmpty) {
-                    val planned = planSteps.removeFirstOrNull
+                if (planSteps.isNotEmpty()) {
+                    val planned = planSteps.removeFirstOrNull()
                     if (planned != null && planned.tool != action.tool) {
                         event("Adapted away from plan step (${planned.tool} → ${action.tool}) - continuing with remaining plan")
                     }
@@ -509,7 +509,7 @@ object AgentEngine {
                     event("Giving up: 5 consecutive failures", "err")
                     break
                 }
-                afterNote = runCatching { Verifier.observeAfter }.getOrNull
+                afterNote = runCatching { Verifier.observeAfter() }.getOrNull()
 
                 // 6. ADAPT ---------------------------------------------------
                 if (result.status != ToolStatus.SUCCESS) {
@@ -533,9 +533,9 @@ object AgentEngine {
             Logx.e(TAG, "Engine crashed: ${t.message}")
             c.memory.finishTask(taskId, "FAILED", "Engine error: ${t.message?.take(100)}", actionsUsed)
             commit { it.copy(status = AgentStatus.FAILED, finalResponse = "Something went wrong inside me: ${t.message?.take(120)}") }
-            com.jarvis.mobile.service.AgentForegroundService.stopAll
+            com.jarvis.mobile.service.AgentForegroundService.stopAll()
         } finally {
-            ticker.cancel
+            ticker.cancel()
         }
     }
 
@@ -543,7 +543,7 @@ object AgentEngine {
         val action: PlannedAction?,
         val response: String?,
         val routeName: String,
-        val warnings: List<String> = emptyList,
+        val warnings: List<String> = emptyList(),
     )
 
     private suspend fun decide(
@@ -557,16 +557,16 @@ object AgentEngine {
         afterNote: String?,
         planNote: String? = null,
     ): RoutedDecision {
-        val route = router.decide
+        val route = router.decide()
         updateRoute(route.route.name)
-        event("Route: ${route.route.name.lowercase} (${route.reason.take(70)})")
+        event("Route: ${route.route.name.lowercase()} (${route.reason.take(70)})")
         return when (route.route) {
             ModelRouter.Route.RULES -> {
                 val d = DeterministicPlanner.decide(goal, screen)
                 RoutedDecision(d.action, d.response, route.route.name)
             }
             else -> {
-                val system = Planner.systemPrompt(suspicion, factsBlock)
+                val system = Planner.systemPrompt(suspicion, factsBlock())
                 val user = Planner.userPrompt(
                     goal, screen, history, route.reason,
                     actionsUsed = actionsUsed,
@@ -591,18 +591,18 @@ object AgentEngine {
                     ))
                 }
                 val completed = withTimeoutOrNull(timeoutMs) {
-                    while (genRef.get == null) delay(200)
+                    while (genRef.get() == null) delay(200)
                     true
                 }
                 if (completed != true) {
-                    if (route.route == ModelRouter.Route.LOCAL) router.cancelLocal
-                    genJob.cancel
+                    if (route.route == ModelRouter.Route.LOCAL) router.cancelLocal()
+                    genJob.cancel()
                     Logx.w(TAG, "LLM timed out after ${timeoutMs / 1000}ms; falling back to rules")
                     event("Model took longer than ${timeoutMs / 1000}s - falling back to rule engine", "warn")
                     val d = DeterministicPlanner.decide(goal, screen)
                     return RoutedDecision(d.action, d.response, ModelRouter.Route.RULES.name)
                 }
-                val (result, _) = genRef.get!!
+                val (result, _) = genRef.get()!!
                 // Honest timing stats for the live feed (local route fills genState).
                 val g = c.modelManager.llama.genState.value
                 if (route.route == ModelRouter.Route.LOCAL && g.outTokens > 0) {
@@ -615,7 +615,7 @@ object AgentEngine {
                             parsed.action != null -> RoutedDecision(parsed.action, null, route.route.name)
                             // A deliberate final answer: the JSON carried a "response" key.
                             hasResponseKey(parsed.raw) ->
-                                RoutedDecision(null, parsed.response?.takeIf { it.isNotBlank } ?: "Task finished.", route.route.name)
+                                RoutedDecision(null, parsed.response?.takeIf { it.isNotBlank() } ?: "Task finished.", route.route.name)
                             // Prose, hallucinated tool, missing args, or garbage → retryable, not fatal.
                             else -> RoutedDecision(
                                 null, null, route.route.name,
@@ -649,7 +649,7 @@ object AgentEngine {
      * from [decide]'s inline flow.
      */
     private suspend fun llmGenerate(prompt: String, maxTokens: Int): String? {
-        val route = router.decide
+        val route = router.decide()
         if (route.route == ModelRouter.Route.RULES) return null
         val timeoutMs = if (route.route == ModelRouter.Route.LOCAL) 240_000L else 90_000L
         val genRef = java.util.concurrent.atomic.AtomicReference<Result<String>?>(null)
@@ -660,23 +660,23 @@ object AgentEngine {
             ))
         }
         val completed = withTimeoutOrNull(timeoutMs) {
-            while (genRef.get == null) delay(200)
+            while (genRef.get() == null) delay(200)
             true
         }
         if (completed != true) {
-            if (route.route == ModelRouter.Route.LOCAL) router.cancelLocal
-            genJob.cancel
+            if (route.route == ModelRouter.Route.LOCAL) router.cancelLocal()
+            genJob.cancel()
             event("Model took longer than ${timeoutMs / 1000}s - skipping this stage", "warn")
             return null
         }
-        return genRef.get?.getOrNull
+        return genRef.get()?.getOrNull()
     }
 
     private suspend fun finish(taskId: Long, goal: String, source: String, response: String?, actionsUsed: Int) {
         val honest = response ?: "Task finished."
         val status = when {
             _state.value.status == AgentStatus.STOPPED -> "STOPPED"
-            stepsFailed -> "PARTIAL"
+            stepsFailed() -> "PARTIAL"
             else -> "COMPLETED"
         }
         c.memory.finishTask(taskId, status, honest.take(300), actionsUsed)
@@ -692,10 +692,10 @@ object AgentEngine {
         }
         Logx.i(TAG, "Task done ($status): ${honest.take(140)}")
         c.voiceOutput.speak(honest.take(180))
-        com.jarvis.mobile.service.AgentForegroundService.stopAll
+        com.jarvis.mobile.service.AgentForegroundService.stopAll()
     }
 
-    private fun stepsFailed: Boolean = _state.value.steps.any { it.status == "FAILED" || it.status == "BLOCKED" }
+    private fun stepsFailed(): Boolean = _state.value.steps.any { it.status == "FAILED" || it.status == "BLOCKED" }
 
     private fun updateRoute(label: String) {
         commit { it.copy(route = label) }

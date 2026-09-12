@@ -24,9 +24,9 @@ import kotlinx.serialization.json.JsonObject
 object ContactResolver {
 
     sealed class Resolution {
-        data class Found(val name: String, val phone: String) : Resolution
-        data class Ambiguous(val query: String, val candidates: List<String>) : Resolution
-        data class NotFound(val query: String, val reason: String) : Resolution
+        data class Found(val name: String, val phone: String) : Resolution()
+        data class Ambiguous(val query: String, val candidates: List<String>) : Resolution()
+        data class NotFound(val query: String, val reason: String) : Resolution()
     }
 
     /** Built-in relationship nicknames so "call dad"/"text mom" resolve instantly with zero AI. */
@@ -44,12 +44,12 @@ object ContactResolver {
     )
 
     fun resolve(rawInput: String): Resolution {
-        val q = rawInput.trim
-        if (q.isEmpty) return Resolution.NotFound(q, "empty query")
+        val q = rawInput.trim()
+        if (q.isEmpty()) return Resolution.NotFound(q, "empty query")
 
         // Tier 0: already a phone number?
         val digits = q.replace(Regex("[^0-9+]"), "")
-        if (digits.length >= 7 && digits.all { it.isDigit || it == '+' }) {
+        if (digits.length >= 7 && digits.all { it.isDigit() || it == '+' }) {
             return Resolution.Found(q, digits)
         }
 
@@ -61,7 +61,7 @@ object ContactResolver {
         }
 
         data class Row(val name: String, val phone: String)
-        val rows = mutableListOf<Row>
+        val rows = mutableListOf<Row>()
         runCatching {
             context.contentResolver.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -72,30 +72,30 @@ object ContactResolver {
                 null, null,
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC",
             )?.use { c ->
-                while (c.moveToNext && rows.size < 800) {
+                while (c.moveToNext() && rows.size < 800) {
                     val n = c.getString(0) ?: continue
                     val p = c.getString(1) ?: continue
-                    rows.add(Row(n.trim, p.trim))
+                    rows.add(Row(n.trim(), p.trim()))
                 }
             }
         }
-        if (rows.isEmpty) return Resolution.NotFound(q, "no contacts readable")
+        if (rows.isEmpty()) return Resolution.NotFound(q, "no contacts readable")
 
-        val lower = q.lowercase
+        val lower = q.lowercase()
         // Tier 1: exact (case-insensitive)
         rows.firstOrNull { it.name.equals(q, ignoreCase = true) }?.let { return Resolution.Found(it.name, it.phone) }
         // Tier 2: LIKE
-        val like = rows.filter { it.name.lowercase.contains(lower) }
+        val like = rows.filter { it.name.lowercase().contains(lower) }
         if (like.size == 1) return Resolution.Found(like[0].name, like[0].phone)
         if (like.size > 1) return Resolution.Ambiguous(q, like.take(5).map { "${it.name} ${it.phone}" })
         // Tier 3: word-start fuzzy (first/last name token starts with query)
-        val fuzzy = rows.filter { r -> r.name.lowercase.split(Regex("\\s+")).any { it.startsWith(lower) } }
+        val fuzzy = rows.filter { r -> r.name.lowercase().split(Regex("\\s+")).any { it.startsWith(lower) } }
         if (fuzzy.size == 1) return Resolution.Found(fuzzy[0].name, fuzzy[0].phone)
         if (fuzzy.size > 1) return Resolution.Ambiguous(q, fuzzy.take(5).map { "${it.name} ${it.phone}" })
         // Tier 4: relationship nicknames ("dad" matches "Papa Ali", "Father", ...)
         val synonyms = NICKNAMES[lower] ?: listOf(lower)
         val nick = rows.filter { r ->
-            val n = r.name.lowercase
+            val n = r.name.lowercase()
             synonyms.any { s -> n.contains(s) }
         }
         if (nick.size == 1) return Resolution.Found(nick[0].name, nick[0].phone)
@@ -103,7 +103,7 @@ object ContactResolver {
         return Resolution.NotFound(q, "no contact matched")
     }
 
-    fun permissionGranted: Boolean =
+    fun permissionGranted(): Boolean =
         ContextCompat.checkSelfPermission(JarvisApp.instance, Manifest.permission.READ_CONTACTS) ==
             PackageManager.PERMISSION_GRANTED
 }
@@ -135,7 +135,7 @@ class CallContactTool : Tool(
                 "ask-user-to-pick-contact",
             )
             is ContactResolver.Resolution.NotFound -> {
-                if (!ContactResolver.permissionGranted) ToolResult(
+                if (!ContactResolver.permissionGranted()) ToolResult(
                     com.jarvis.mobile.core.tools.ToolStatus.REQUIRES_CONFIRMATION,
                     "Contacts permission not granted - I cannot look up \"$who\". Grant Contacts access, or give me the raw number.",
                     Verification.COULD_NOT_VERIFY,
@@ -167,7 +167,7 @@ class SendSmsTool : Tool(
                 "ask-user-to-pick-contact",
             ).let { return it }
             is ContactResolver.Resolution.NotFound -> {
-                if (!ContactResolver.permissionGranted) return ToolResult(
+                if (!ContactResolver.permissionGranted()) return ToolResult(
                     com.jarvis.mobile.core.tools.ToolStatus.REQUIRES_CONFIRMATION,
                     "Contacts permission not granted - grant Contacts access or give me the raw number.",
                     Verification.COULD_NOT_VERIFY,
@@ -200,7 +200,7 @@ class WhatsAppMessageTool : Tool(
         val encoded = Uri.encode(body)
         if (who != null) {
             val phone = when (val r = ContactResolver.resolve(who)) {
-                is ContactResolver.Resolution.Found -> r.phone.filter { it.isDigit || it == '+' }
+                is ContactResolver.Resolution.Found -> r.phone.filter { it.isDigit() || it == '+' }
                 is ContactResolver.Resolution.Ambiguous -> return ToolResult.fail(
                     "Several contacts match \"$who\": ${r.candidates.joinToString("; ")}. Ask the user which one.",
                     "ask-user-to-pick-contact",
@@ -229,7 +229,7 @@ class TelegramMessageTool : Tool(
     ),
 ) {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val h = T.str(args, "handle")?.trim?.removePrefix("@")
+        val h = T.str(args, "handle")?.trim()?.removePrefix("@")
             ?: return ToolResult.fail("Missing required arg: handle.")
         val i = Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/$h")).apply {
             setPackage("org.telegram.messenger")
