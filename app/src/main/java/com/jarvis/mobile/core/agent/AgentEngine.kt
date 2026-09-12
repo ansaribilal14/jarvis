@@ -654,7 +654,10 @@ object AgentEngine {
         val timeoutMs = if (route.route == ModelRouter.Route.LOCAL) 240_000L else 90_000L
         val genRef = java.util.concurrent.atomic.AtomicReference<Result<String>?>(null)
         val genJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-            genRef.set(runCatching { router.generate(prompt, maxTokens).first })
+            genRef.set(runCatching { router.generate(prompt, maxTokens).first }.fold(
+                onSuccess = { it },
+                onFailure = { Result.failure<String>(it) },
+            ))
         }
         val completed = withTimeoutOrNull(timeoutMs) {
             while (genRef.get == null) delay(200)

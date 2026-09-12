@@ -123,18 +123,18 @@ class CallContactTool : Tool(
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val who = T.str(args, "contact") ?: return ToolResult.fail("Missing required arg: contact.")
         return when (val r = ContactResolver.resolve(who)) {
-            is ContactResolver.Found -> {
+            is ContactResolver.Resolution.Found -> {
                 val i = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(r.phone)}"))
                 start(i).copy(
                     message = "Dialer open with ${r.name} (${r.phone}) - press call to place the call.",
                     detail = "resolved=${r.name}",
                 )
             }
-            is ContactResolver.Ambiguous -> ToolResult.fail(
+            is ContactResolver.Resolution.Ambiguous -> ToolResult.fail(
                 "Several contacts match \"$who\": ${r.candidates.joinToString("; ")}. Ask the user which one, then retry with the exact name.",
                 "ask-user-to-pick-contact",
             )
-            is ContactResolver.NotFound -> {
+            is ContactResolver.Resolution.NotFound -> {
                 if (!ContactResolver.permissionGranted) ToolResult(
                     com.jarvis.mobile.core.tools.ToolStatus.REQUIRES_CONFIRMATION,
                     "Contacts permission not granted - I cannot look up \"$who\". Grant Contacts access, or give me the raw number.",
@@ -161,12 +161,12 @@ class SendSmsTool : Tool(
         val who = T.str(args, "contact") ?: return ToolResult.fail("Missing required arg: contact.")
         val body = T.str(args, "message") ?: return ToolResult.fail("Missing required arg: message.")
         val phone = when (val r = ContactResolver.resolve(who)) {
-            is ContactResolver.Found -> r.phone
-            is ContactResolver.Ambiguous -> ToolResult.fail(
+            is ContactResolver.Resolution.Found -> r.phone
+            is ContactResolver.Resolution.Ambiguous -> ToolResult.fail(
                 "Several contacts match \"$who\": ${r.candidates.joinToString("; ")}. Ask the user which one.",
                 "ask-user-to-pick-contact",
             ).let { return it }
-            is ContactResolver.NotFound -> {
+            is ContactResolver.Resolution.NotFound -> {
                 if (!ContactResolver.permissionGranted) return ToolResult(
                     com.jarvis.mobile.core.tools.ToolStatus.REQUIRES_CONFIRMATION,
                     "Contacts permission not granted - grant Contacts access or give me the raw number.",
@@ -200,12 +200,12 @@ class WhatsAppMessageTool : Tool(
         val encoded = Uri.encode(body)
         if (who != null) {
             val phone = when (val r = ContactResolver.resolve(who)) {
-                is ContactResolver.Found -> r.phone.filter { it.isDigit || it == '+' }
-                is ContactResolver.Ambiguous -> return ToolResult.fail(
+                is ContactResolver.Resolution.Found -> r.phone.filter { it.isDigit || it == '+' }
+                is ContactResolver.Resolution.Ambiguous -> return ToolResult.fail(
                     "Several contacts match \"$who\": ${r.candidates.joinToString("; ")}. Ask the user which one.",
                     "ask-user-to-pick-contact",
                 )
-                is ContactResolver.NotFound -> null
+                is ContactResolver.Resolution.NotFound -> null
             }
             if (phone != null && phone.length >= 7) {
                 val i = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$phone&text=$encoded")).apply {
