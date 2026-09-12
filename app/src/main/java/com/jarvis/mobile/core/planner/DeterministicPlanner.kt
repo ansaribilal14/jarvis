@@ -18,12 +18,12 @@ object DeterministicPlanner {
 
     private val rules = listOf(
         Rule(Regex("(?i)open (the )?(.+?)( app)?$")) { m ->
-            m.groupValues[2].trim().takeIf { it.isNotBlank() }?.let {
+            m.groupValues[2].trim.takeIf { it.isNotBlank }?.let {
                 PlannedAction("open_app", buildJsonObject { put("app", it) })
             }
         },
         Rule(Regex("(?i)set brightness to (\\d+)")) { m ->
-            PlannedAction("control_brightness", buildJsonObject { put("value", m.groupValues[1].toInt()) })
+            PlannedAction("control_brightness", buildJsonObject { put("value", m.groupValues[1].toInt) })
         },
         Rule(Regex("(?i)(turn )?(wifi|wi-fi) (on|off)")) { m ->
             PlannedAction("control_wifi", buildJsonObject { put("on", m.groupValues[3].equals("on", true)) })
@@ -35,10 +35,10 @@ object DeterministicPlanner {
             PlannedAction("control_flashlight", buildJsonObject { put("on", m.groupValues[4].equals("on", true)) })
         },
         Rule(Regex("(?i)set volume to (\\d+)")) { m ->
-            PlannedAction("control_volume", buildJsonObject { put("value", m.groupValues[1].toInt()) })
+            PlannedAction("control_volume", buildJsonObject { put("value", m.groupValues[1].toInt) })
         },
         Rule(Regex("(?i)(volume (up|down|mute))")) { m ->
-            PlannedAction("control_volume", buildJsonObject { put("direction", m.groupValues[2].lowercase()) })
+            PlannedAction("control_volume", buildJsonObject { put("direction", m.groupValues[2].lowercase) })
         },
         Rule(Regex("(?i)read (my )?notifications")) { _ -> PlannedAction("read_notifications", buildJsonObject { }) },
         Rule(Regex("(?i)(what.?s|show) (my |the )?calendar")) { _ ->
@@ -72,16 +72,43 @@ object DeterministicPlanner {
         )
     }
 
-    fun available(): Boolean = true
+    fun available: Boolean = true
 
-    fun note(): String = "deterministic-rule-engine"
+    fun note: String = "deterministic-rule-engine"
 }
 
-/** Facts block used in prompts (memory retrieval). */
-suspend fun factsBlock(): String? {
+/** Facts block used in prompts (memory retrieval + live device state). */
+suspend fun factsBlock: String? {
+    val device = deviceFactsLine
     val facts = runCatching {
-        JarvisApp.instance.container.memory.factsSnapshot().take(10)
-    }.getOrNull() ?: return null
-    if (facts.isEmpty()) return null
-    return "USER FACTS (user-provided, may help):\n" + facts.joinToString("\n") { "- ${it.key}: ${it.value.take(60)}" }
+        JarvisApp.instance.container.memory.factsSnapshot.take(10)
+    }.getOrNull
+    val parts = buildList {
+        if (device != null) add("DEVICE NOW: $device")
+        if (!facts.isNullOrEmpty) {
+            add("USER FACTS (user-provided, may help):\n" + facts.joinToString("\n") { "- ${it.key}: ${it.value.take(60)}" })
+        }
+    }
+    return parts.takeIf { it.isNotEmpty }?.joinToString("\n\n")
 }
+
+/** One compact line of live device truth for the model (battery, clock, thermal). */
+private fun deviceFactsLine: String? = runCatching {
+    val ctx = JarvisApp.instance
+    val bm = ctx.getSystemService(android.content.Context.BATTERY_SERVICE) as? android.os.BatteryManager
+    val level = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 1..100 }
+    val charging = runCatching { bm?.isCharging }.getOrDefault(false)
+    val time = java.text.SimpleDateFormat("EEE HH:mm", java.util.Locale.getDefault).format(java.util.Date)
+    val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+    val thermal = when (pm?.currentThermalStatus ?: -1) {
+        0, 1 -> "normal"
+        2 -> "light throttle"
+        3, 4 -> "throttling"
+        else -> "unknown"
+    }
+    buildString {
+        append(time)
+        if (level != null) append(" · battery $level%").append(if (charging) " (charging)" else "")
+        append(" · thermal $thermal")
+    }
+}.getOrNull

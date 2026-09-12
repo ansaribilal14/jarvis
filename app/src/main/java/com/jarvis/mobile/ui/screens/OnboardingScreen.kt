@@ -78,6 +78,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val contactsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     Column(
         Modifier
@@ -201,6 +202,13 @@ fun OnboardingScreen(onDone: () -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TextButton(onClick = { notifLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) }) { Text("Allow") }
                         Text("Shows agent progress + stop control.", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                SectionCard("Contacts (calls & texts)") {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TextButton(onClick = { contactsLauncher.launch(android.Manifest.permission.READ_CONTACTS) }) { Text("Allow") }
+                        Text("Optional - lets \"call dad\" / \"text mom\" resolve names. Numbers always work.", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
