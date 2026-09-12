@@ -205,6 +205,11 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
 
     llama_kv_cache_clear(g_ctx);
 
+    // Immediate feedback: the Kotlin UI shows "Waking the model" only while
+    // promptTotal is still 0. Report right after tokenize so the user sees
+    // "Reading context 0/N" within milliseconds instead of a static label.
+    report(0, 0, n_prompt, 0, "");
+
     auto *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
     llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.92f, 1));
     llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.25f));
@@ -213,11 +218,13 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
     std::string out;
     out.reserve(static_cast<size_t>(max_tokens) * 4);
 
-    // Prompt in chunks that respect n_batch (256 here).
+    // Prompt in chunks well under n_batch. 64-token chunks keep Stop/Cancel
+    // responsive (g_cancel is only checked between chunks) and give the UI
+    // granular "Reading context x/N" progress on slow, thermally-limited phones.
     int pos = 0;
     while (pos < n_prompt) {
         if (g_cancel) break;
-        const int chunk = std::min(256, n_prompt - pos);
+        const int chunk = std::min(64, n_prompt - pos);
         if (llama_decode(g_ctx, llama_batch_get_one(tokens.data() + pos, chunk)) != 0) {
             LOGE("prompt decode failed");
             llama_sampler_free(smpl);

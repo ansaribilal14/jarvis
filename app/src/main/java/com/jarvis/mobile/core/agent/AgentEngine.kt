@@ -211,9 +211,9 @@ object AgentEngine {
                         g.generating -> "Waking the model…"
                         else -> null
                     }
-                    if (g.generating && g.phase == 1 && g.outTokens == 0 && now - startMs > 90_000 && !slowWarned) {
+                    if (g.generating && g.outTokens == 0 && now - startMs > 90_000 && !slowWarned) {
                         slowWarned = true
-                        event("Model is slow to respond (large context / heavy CPU load) - still running, not frozen.", "warn")
+                        event("Model is slow to respond (large context / thermal throttling) - still running, not frozen.", "warn")
                     }
                 }
                 commit { it.copy(elapsedMs = now - startMs, thinkingDetail = detail) }
@@ -455,7 +455,31 @@ object AgentEngine {
                 val template = c.modelManager.llama.activeModel?.template
                     ?: com.jarvis.mobile.core.model.ModelCatalog.ChatTemplate.CHATML
                 val prompt = com.jarvis.mobile.core.model.PromptTemplates.render(template, system, user)
-                val (result, _) = router.generate(prompt, maxTokens = 300)
+                // Hard deadline: a hung/slow native call must NEVER freeze the task
+                // (v1.3.0 hung forever at "Waking the model"). Local gets a longer
+                // budget than remote; on timeout we cancel inference and fall back
+                // to the deterministic planner so the task still makes progress.
+                val timeoutMs = if (route.route == ModelRouter.Route.LOCAL) 240_000L else 90_000L
+                val genRef = java.util.concurrent.atomic.AtomicReference<Pair<Result<String>, ModelRouter.Decision>?>(null)
+                val genJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                    genRef.set(runCatching { router.generate(prompt, maxTokens = 300) }.fold(
+                        onSuccess = { it },
+                        onFailure = { Result.failure<String>(it) to ModelRouter.Decision(route.route, "error: ${it.message}") },
+                    ))
+                }
+                val completed = withTimeoutOrNull(timeoutMs) {
+                    while (genRef.get() == null) delay(200)
+                    true
+                }
+                if (completed != true) {
+                    if (route.route == ModelRouter.Route.LOCAL) router.cancelLocal()
+                    genJob.cancel()
+                    Logx.w(TAG, "LLM timed out after ${timeoutMs / 1000}ms; falling back to rules")
+                    event("Model took longer than ${timeoutMs / 1000}s - falling back to rule engine", "warn")
+                    val d = DeterministicPlanner.decide(goal, screen)
+                    return RoutedDecision(d.action, d.response, ModelRouter.Route.RULES.name)
+                }
+                val (result, _) = genRef.get()!!
                 // Honest timing stats for the live feed (local route fills genState).
                 val g = c.modelManager.llama.genState.value
                 if (route.route == ModelRouter.Route.LOCAL && g.outTokens > 0) {

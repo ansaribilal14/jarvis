@@ -46,6 +46,12 @@ class LlamaCppProvider(
 
     val activeModel: ModelCatalog.CatalogModel? get() = loadedModel
 
+    /** True while a native completion is in flight (decode/prefill). Watchdog must never free under it. */
+    fun isGenerating(): Boolean = generating.get()
+
+    /** Wall clock of the last generation/load activity - drives the idle-unload decision. */
+    fun lastUsedAt(): Long = lastUsed.get()
+
     private val _genState = MutableStateFlow(GenState())
     val genState: StateFlow<GenState> = _genState
 
@@ -99,6 +105,10 @@ class LlamaCppProvider(
             val done = _genState.value
             _genState.value = done.copy(generating = false, lastUpdateAtMs = System.currentTimeMillis())
             generating.set(false)
+            // Idle timer restarts after every generation, so the watchdog can never
+            // consider an active/in-flight session "idle" (root cause of the v1.3.0
+            // "stuck at Waking the model" hang: unload mid-decode = use-after-free).
+            lastUsed.set(System.currentTimeMillis())
         }
     }
 
@@ -107,6 +117,14 @@ class LlamaCppProvider(
     }
 
     override fun unload() {
+        // HARD GUARD: freeing the native model/context while nativeComplete is
+        // decoding on another thread is use-after-free (hangs or corrupts and the
+        // generating flag never clears -> UI frozen at "Waking the model").
+        if (generating.get()) {
+            Logx.w(TAG, "Unload requested while generating - cancelled inference, deferring free")
+            cancel()
+            return
+        }
         if (isReady()) {
             LlamaBridge.nativeFree()
             Logx.i(TAG, "Model unloaded (idle)")

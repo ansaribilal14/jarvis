@@ -171,9 +171,13 @@ class ModelManager(
                 kotlinx.coroutines.delay(60_000)
                 val min = settings.unloadIdleMin.first()
                 if (min <= 0) continue
+                // NEVER unload while a completion is in flight: nativeFree() under a
+                // live decode is use-after-free and froze tasks at "Waking the model…"
+                // (v1.3.0 bug). The provider's lastUsedAt() also now refreshes on every
+                // generate(), not only at activation.
+                if (llama.isGenerating()) continue
                 if (llama.isReady()) {
-                    // LlamaCppProvider tracks lastUsed internally via generation calls.
-                    if (System.currentTimeMillis() - lastGenerationAt > min * 60_000L) {
+                    if (System.currentTimeMillis() - llama.lastUsedAt() > min * 60_000L) {
                         unload()
                         Logx.i(TAG, "Idle watchdog unloaded the model")
                     }
