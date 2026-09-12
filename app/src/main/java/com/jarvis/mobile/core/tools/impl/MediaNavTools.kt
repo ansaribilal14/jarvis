@@ -117,7 +117,7 @@ class SetTimerTool : Tool(
         val s = T.int(args, "seconds") ?: return ToolResult.fail("Missing required arg: seconds.")
         if (s <= 0 || s > 86_400) return ToolResult.fail("seconds must be 1-86400.")
         val i = Intent(AlarmClock.ACTION_SET_TIMER).apply {
-            putExtra(AlarmClock.EXTRA_LENGTH_IN_SECONDS, s)
+            putExtra(android.app.AlarmManager.EXTRA_LENGTH_IN_SECONDS, s)
             putExtra(AlarmClock.EXTRA_SKIP_UI, false)
             T.str(args, "label")?.let { putExtra(AlarmClock.EXTRA_MESSAGE, it) }
         }
