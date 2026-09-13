@@ -86,7 +86,7 @@ class LlamaCppProvider(
         prompt: String,
         maxTokens: Int,
         stopSequences: List<String>,
-        grammar: String? = null,
+        grammar: String?,
     ): Result<String> = withContext(Dispatchers.Default) {
         if (!isReady()) return@withContext Result.failure(IllegalStateException("No local model loaded"))
         if (!generating.compareAndSet(false, true)) {
