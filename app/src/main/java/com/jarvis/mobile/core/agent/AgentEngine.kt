@@ -648,7 +648,10 @@ object AgentEngine {
                     genJob.cancel()
                     Logx.w(TAG, "LLM timed out after ${timeoutMs / 1000}ms; falling back to rules")
                     event("Model took longer than ${timeoutMs / 1000}s - falling back to rule engine", "warn")
-                    val d = DeterministicPlanner.decide(goal, screen)
+                    val d = DeterministicPlanner.decide(
+                        goal, screen,
+                        hint = "My local model took longer than ${timeoutMs / 1000}s for this request",
+                    )
                     return RoutedDecision(d.action, d.response, ModelRouter.Route.RULES.name)
                 }
                 val (result, _) = genRef.get()!!
@@ -679,7 +682,10 @@ object AgentEngine {
                     onFailure = { t ->
                         Logx.w(TAG, "LLM route failed (${t.message}); falling back to rules")
                         event("LLM failed (${t.message?.take(60)}) - falling back to rule engine", "warn")
-                        val d = DeterministicPlanner.decide(goal, screen)
+                        val d = DeterministicPlanner.decide(
+                            goal, screen,
+                            hint = "My local model hit an error (${t.message?.take(60)})",
+                        )
                         RoutedDecision(d.action, d.response, ModelRouter.Route.RULES.name)
                     },
                 )

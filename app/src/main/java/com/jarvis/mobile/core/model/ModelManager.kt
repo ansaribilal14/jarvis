@@ -196,6 +196,30 @@ class ModelManager(
         if (_loadState.value !is LoadState.Loading) _loadState.value = LoadState.Idle
     }
 
+    /**
+     * Auto-restore the last active model after an app restart (or process death):
+     * the native runtime does not survive process death, but the user already
+     * activated this model once. Silently reloading it means the agent is fully
+     * usable right after launch instead of routing to the rule engine and claiming
+     * "no local model downloaded yet" - the exact bug users saw after restarting.
+     */
+    fun autoReloadActive() {
+        scope.launch {
+            runCatching {
+                if (llama.isReady() || isLoading()) return@launch
+                val id = settings.activeModelId.first() ?: return@launch
+                val m = com.jarvis.mobile.core.model.ModelCatalog.byId(id)
+                    ?: importedModels().firstOrNull { it.id == id }
+                    ?: return@launch
+                val f = fileFor(m)
+                if (!f.exists() || f.length() == 0L) return@launch
+                Logx.i(TAG, "Auto-reloading last active model: $id")
+                val ok = selectAndLoad(m)
+                Logx.i(TAG, "Auto-reload ${if (ok) "succeeded" else "failed"} for $id")
+            }.onFailure { Logx.w(TAG, "Auto-reload skipped: ${it.message}") }
+        }
+    }
+
     /** Idle unloader: battery management (spec: BATTERY MANAGEMENT). */
     fun startIdleWatchdog() {
         scope.launch {

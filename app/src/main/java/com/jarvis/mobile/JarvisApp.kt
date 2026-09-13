@@ -60,6 +60,10 @@ class JarvisApp : Application() {
         createChannels()
         ToolRegistry.registerAll(buildToolSet(container))
         AgentEngine.init(container)
+        // Restore the last activated model after an app restart: without this the
+        // agent greeted users with "no local model downloaded yet" even though the
+        // model WAS downloaded + activated - it just was not back in RAM yet.
+        container.modelManager.autoReloadActive()
         // Telegram remote control (adapted from the user's MobileAgent demo):
         // starts only when the user enabled it in Settings.
         CoroutineScope(Dispatchers.Default).launch {

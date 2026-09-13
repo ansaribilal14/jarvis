@@ -56,8 +56,12 @@ object DeterministicPlanner {
         },
     )
 
-    /** Returns an action if the request is covered, else a final-response decision. */
-    fun decide(goal: String, screen: ScreenObservation?): Planner.Decision {
+    /**
+     * Returns an action if the request is covered, else a final-response decision.
+     * [hint]: why the rule engine answered (route reason / timeout / error) so the
+     * fallback message reflects the truth instead of a generic claim.
+     */
+    fun decide(goal: String, screen: ScreenObservation?, hint: String? = null): Planner.Decision {
         for (rule in rules) {
             val m = rule.regex.find(goal)
             if (m != null) {
@@ -65,11 +69,40 @@ object DeterministicPlanner {
             }
         }
         // Open app is the most common; try fuzzy app resolution for "open X ..." patterns missed above.
-        return Planner.Decision(
-            null,
-            "I'm running in offline rule mode (no local model downloaded yet). I can handle simple commands like \"open Chrome\", \"set brightness to 40\", \"turn wifi off\", \"read my notifications\" or \"set volume to 5\". Download a model in the Models tab to unlock full natural-language control.",
-            "rules:unmatched",
-        )
+        return Planner.Decision(null, fallbackMessage(hint), "rules:unmatched")
+    }
+
+    /**
+     * State-aware fallback: the OLD message always claimed "no local model
+     * downloaded yet", which was FALSE and deeply confusing when the user had a
+     * model activated (LLM timeout path) or the app had restarted (model not yet
+     * back in RAM). Report the REAL state instead.
+     */
+    private fun fallbackMessage(hint: String?): String {
+        val capabilities = "I can still run simple commands like \"open Chrome\", \"set brightness to 40\", " +
+            "\"turn wifi off\", \"read my notifications\" or \"set volume to 5\"."
+        val mm = runCatching { JarvisApp.instance.container.modelManager }.getOrNull()
+        if (mm != null) {
+            if (mm.llama.isReady()) {
+                // Model IS loaded - the LLM just failed/timed out for this round.
+                return (hint?.let { "$it. " } ?: "My local model could not complete that reasoning round. ") +
+                    "$capabilities Try again, or use a faster/smaller model or API mode for heavy tasks."
+            }
+            val activeId = mm.activeId()
+            if (activeId != null || mm.isLoading()) {
+                return "Your model ($activeId) is set but not loaded into memory right now - it unloads after " +
+                    "being idle or when the app restarts, and JARVIS is reloading it automatically. " +
+                    "You can also activate it from the Models tab. Meanwhile: $capabilities"
+            }
+            val hasFile = mm.importedFiles().isNotEmpty() ||
+                com.jarvis.mobile.core.model.ModelCatalog.MODELS.any { mm.isDownloaded(it) }
+            if (hasFile) {
+                return "A model is downloaded on this device but none is active. Activate one in the Models tab " +
+                    "to unlock full natural-language control. Meanwhile: $capabilities"
+            }
+        }
+        return "I'm running on built-in rules right now (no local model on this device yet). $capabilities " +
+            "Download a model in the Models tab - or turn on API mode - to unlock full natural-language control."
     }
 
     fun available(): Boolean = true
