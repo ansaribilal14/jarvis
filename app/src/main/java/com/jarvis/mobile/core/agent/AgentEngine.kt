@@ -256,7 +256,7 @@ object AgentEngine {
             synchronized(stateLock) { taskEvents.clear() }
             val taskId = c.memory.startTask(goal, source)
             c.memory.addChat("USER", goal, taskId)
-            val ticker = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.coroutineContext).launch {
+            val ticker = kotlinx.coroutines.CoroutineScope(kotlin.coroutines.coroutineContext).launch {
                 while (isActive) {
                     delay(1000)
                     commit { it.copy(elapsedMs = System.currentTimeMillis() - startMs) }
