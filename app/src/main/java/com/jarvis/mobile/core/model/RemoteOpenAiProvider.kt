@@ -84,6 +84,11 @@ class RemoteOpenAiProvider(
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer ${vault.remoteApiKey}")
+            // OpenRouter asks clients to identify themselves (free-tier friendly).
+            if (baseUrl.contains("openrouter.ai")) {
+                conn.setRequestProperty("HTTP-Referer", "https://jarvis.local")
+                conn.setRequestProperty("X-Title", "JARVIS")
+            }
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText() ?: ""

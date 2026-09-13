@@ -27,6 +27,8 @@ fun buildToolSet(container: JarvisApp.Container): List<Tool> = listOf(
     FindElementTool(),
     PressBackTool(),
     PressHomeTool(),
+    PressRecentsTool(),
+    PressNotificationsTool(),
     WaitTool(),
     WaitForChangeTool(),
     // Device controls

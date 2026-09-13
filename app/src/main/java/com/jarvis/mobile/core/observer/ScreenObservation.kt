@@ -70,7 +70,7 @@ data class ScreenObservation(
             if (e.scrollable) bits.add("scrollable=true")
             if (e.selected && !compact) bits.add("selected=true")
             sb.append("[").append(e.idx).append("] ").append(bits.joinToString(" "))
-            sb.append(" @(").append(e.centerX).append(",").append(e.centerY).append(")")
+            sb.append(" center=(").append(e.centerX).append(",").append(e.centerY).append(")")
             sb.append('\n')
         }
         val hidden = if (compact) pool.size - shown.size else elements.size - shown.size

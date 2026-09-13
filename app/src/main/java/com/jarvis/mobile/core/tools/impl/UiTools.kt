@@ -153,18 +153,31 @@ class DoubleTapTool : Tool(
 class LongPressTool : Tool(
     ToolSpec(
         "long_press", "Long-press an on-screen element.",
-        listOf(com.jarvis.mobile.core.tools.ParamSpec("elementIdx", "int", false, "index from read_screen")),
+        listOf(
+            com.jarvis.mobile.core.tools.ParamSpec("elementIdx", "int", false, "index from read_screen"),
+            com.jarvis.mobile.core.tools.ParamSpec("text", "string", false, "visible text of the target"),
+            com.jarvis.mobile.core.tools.ParamSpec("x", "int", false, "x coordinate of a visible target"),
+            com.jarvis.mobile.core.tools.ParamSpec("y", "int", false, "y coordinate of a visible target"),
+        ),
         com.jarvis.mobile.core.tools.Risk.LOW,
         needsAccessibility = true,
     ),
 ) {
     override suspend fun execute(args: kotlinx.serialization.json.JsonObject, ctx: ToolContext): ToolResult {
         val svc = T.svc() ?: return ToolResult.unavailable("Accessibility service not connected.")
-        val fresh = T.freshObserve() ?: return ToolResult.fail("Cannot read the screen.")
-        val el = UiResolve.resolve(fresh, ctx.observation, T.int(args, "elementIdx"), T.str(args, "text"), T.str(args, "viewId"))
-            ?: return ToolResult.fail("Target not found on the current screen.", "reobserve-or-scroll")
-        val ok = svc.longPressAt(el.centerX, el.centerY)
-        return if (ok) ToolResult.ok("Long-pressed \"${el.label()}\".", Verification.UNVERIFIED)
+        val fresh = T.freshObserve()
+        val el = fresh?.let { o -> UiResolve.resolve(o, ctx.observation, T.int(args, "elementIdx"), T.str(args, "text"), null) }
+        val (x, y, what) = if (el != null) {
+            Triple(el.centerX, el.centerY, "\"${el.label()}\"")
+        } else {
+            val px = T.int(args, "x")
+            val py = T.int(args, "y")
+            if (px == null || py == null) return ToolResult.fail("Target not found on the current screen.", "reobserve-or-scroll")
+            val m = svc.resources.displayMetrics
+            Triple(px.coerceIn(0, m.widthPixels - 1), py.coerceIn(0, m.heightPixels - 1), "($px,$py)")
+        }
+        val ok = svc.longPressAt(x, y)
+        return if (ok) ToolResult.ok("Long-pressed $what.", Verification.UNVERIFIED)
         else ToolResult.fail("Could not dispatch long-press gesture.")
     }
 }
@@ -185,9 +198,32 @@ class TypeTextTool : Tool(
         val text = T.str(args, "text") ?: return ToolResult.fail("Missing required arg: text.")
         val fresh = T.freshObserve() ?: return ToolResult.fail("Cannot read the screen.")
 
+        // Focused field first (MobileAgent behavior): after tapping a field, THAT
+        // field is focused - on multi-field screens this is the only correct target.
+        val focusedEditable = runCatching {
+            svc.rootInActiveWindow?.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+        }.getOrNull()?.takeIf { it.isEditable }
+
         val field = fresh.elements.firstOrNull { it.idx == (T.int(args, "elementIdx") ?: -1) }
             ?: fresh.elements.firstOrNull { it.editable }
             ?: return ToolResult.fail("No editable field found on the current screen (${fresh.packageName}).", "open-app-first")
+
+        if (focusedEditable != null && T.int(args, "elementIdx") == null) {
+            if (focusedEditable.isPassword) return ToolResult.blocked("Refusing to type into a password field (safety policy).", "password-policy")
+            val ok = svc.performSetText(focusedEditable, text)
+            if (ok) {
+                T.settle(240)
+                val after = T.freshObserve(0)
+                val typed = after?.findContains(text.take(20)) != null
+                return ToolResult(
+                    com.jarvis.mobile.core.tools.ToolStatus.SUCCESS,
+                    "Typed \"${text.take(40)}${if (text.length > 40) "…" else ""}\" into the focused field.",
+                    if (typed) Verification.VERIFIED else Verification.UNVERIFIED,
+                )
+            }
+            // Focused editor rejected direct text - fall through to the generic
+            // tap-then-set path below (custom editors like Instagram need it).
+        }
 
         if (field.isPassword) return ToolResult.blocked("Refusing to type into a password field (safety policy).", "password-policy")
         val looksOtp = listOf("otp", "one time", "verification code", "confirm code").any {
@@ -261,14 +297,31 @@ class ClearTextTool : Tool(
 class ScrollTool : Tool(
     ToolSpec(
         "scroll", "Scroll the screen or a list.",
-        listOf(com.jarvis.mobile.core.tools.ParamSpec("forward", "bool", false, "true = down/forward (default true)")),
+        listOf(
+            com.jarvis.mobile.core.tools.ParamSpec("forward", "bool", false, "true = down/forward (default true)"),
+            com.jarvis.mobile.core.tools.ParamSpec("direction", "string", false, "up|down|left|right (alternative to forward)"),
+        ),
         com.jarvis.mobile.core.tools.Risk.LOW,
         needsAccessibility = true,
     ),
 ) {
     override suspend fun execute(args: kotlinx.serialization.json.JsonObject, ctx: ToolContext): ToolResult {
         val svc = T.svc() ?: return ToolResult.unavailable("Accessibility service not connected.")
-        val forward = T.bool(args, "forward") ?: true
+        val dir = T.str(args, "direction")?.lowercase()
+        val forward = when (dir) {
+            "up" -> false
+            "down" -> true
+            else -> T.bool(args, "forward") ?: true
+        }
+        // Horizontal directions ride a centered swipe gesture (pagers, galleries, tabs).
+        if (dir == "left" || dir == "right") {
+            val m = svc.resources.displayMetrics
+            val cy = m.heightPixels / 2
+            val ok = if (dir == "left") svc.swipe((m.widthPixels * 0.78).toInt(), cy, (m.widthPixels * 0.22).toInt(), cy)
+            else svc.swipe((m.widthPixels * 0.22).toInt(), cy, (m.widthPixels * 0.78).toInt(), cy)
+            return if (ok) ToolResult.ok("Swiped $dir.", Verification.UNVERIFIED)
+            else ToolResult.fail("Could not dispatch swipe gesture.")
+        }
         val before = T.freshObserve(0)?.elements?.map { it.text to it.top } ?: emptyList()
         val ok = svc.scrollScreen(forward)
         if (!ok) return ToolResult.fail("Could not scroll.")
@@ -409,6 +462,27 @@ class PressHomeTool : Tool(
         val pkg = T.svc()?.currentPackage()
         val verified = pkg != null && (pkg.contains("launcher", true) || pkg == "com.google.android.apps.nexuslauncher")
         return ToolResult.ok("Pressed Home.", if (verified) Verification.VERIFIED else Verification.UNVERIFIED)
+    }
+}
+
+class PressRecentsTool : Tool(
+    ToolSpec("press_recents", "Open the recent-apps overview.", emptyList(), com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true),
+) {
+    override suspend fun execute(args: kotlinx.serialization.json.JsonObject, ctx: ToolContext): ToolResult {
+        val svc = T.svc() ?: return ToolResult.unavailable("Accessibility service not connected.")
+        val ok = runCatching { svc.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS) }.getOrDefault(false)
+        return if (ok) ToolResult.ok("Opened recents.", Verification.UNVERIFIED) else ToolResult.fail("Recents action rejected.")
+    }
+}
+
+class PressNotificationsTool : Tool(
+    ToolSpec("press_notifications", "Pull down the notification shade.", emptyList(), com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true),
+) {
+    override suspend fun execute(args: kotlinx.serialization.json.JsonObject, ctx: ToolContext): ToolResult {
+        val svc = T.svc() ?: return ToolResult.unavailable("Accessibility service not connected.")
+        val ok = svc.globalNotifications()
+        return if (ok) ToolResult.ok("Opened the notification shade.", Verification.UNVERIFIED)
+        else ToolResult.fail("Notification shade action rejected.")
     }
 }
 

@@ -30,7 +30,7 @@ data class SkillStep(
         "TAP" -> "Tap ${label()}"
         "LONG_PRESS" -> "Long-press ${label()}"
         "TEXT" -> "Type \"${input?.take(40) ?: "?"}\" into ${label()}"
-        "SCROLL" -> "Scroll ${dir ?: "fwd"}"
+        "SCROLL" -> "Scroll ${dir ?: "down"}"
         "BACK" -> "Press back"
         "HOME" -> "Go home"
         "APP_OPEN" -> "Open ${pkg?.substringBefore('.') ?: "app"}"

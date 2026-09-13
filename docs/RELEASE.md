@@ -24,6 +24,7 @@ real device, run the TESTING.md scenario list.
 | version | code | theme |
 |---|---|---|
 | v1.8.0 | 12 | grammar-constrained decoding, gesture-completion callbacks, agent state machine, grounding-core tests |
+| v1.9.0 | 13 | Tasker-grade raw-touch skill recorder, MobileAgent-style flat action loop, any-provider API mode (OpenRouter/DeepSeek/NIM/Ollama) |
 | v1.7.0 | 11 | skill recorder + /grill-me + expert-review hardening |
 | v1.6.1 | 10 | model auto-reload, state-aware fallbacks (v1.6.0 changes folded in; tag skipped) |
 | v1.5.0 | 8 | Test-model JNI fix, perf-core threads, fast models, NVIDIA NIM API mode |

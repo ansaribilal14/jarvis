@@ -19,4 +19,4 @@
 | App killed during long tasks | Disable battery optimization for JARVIS (Doctor shows this check). |
 | WhatsApp/Telegram message "sent itself" | It cannot: messages are prepared as drafts and the human presses send. If a draft was left, that is the designed behavior. |
 | Skill replay fails at a step | The screen changed since recording. Run Edit on the skill, fix the failing step's label/coordinates, or re-record. A step that fails twice stops the skill honestly instead of guessing. |
-| Skill does not record what I did | The recorder captures taps, long-press, typing, scrolls and app switches from other apps (not JARVIS, not the system shade). Nav-bar Back/Home are not events - add them as steps in the editor. |
+| Skill does not record what I did | v1.9 records every physical touch by raw coordinates (Android 14+): taps, long-press, swipes, typing, app switches - in any app. On older Android versions the recorder falls back to accessibility click events, which some apps never emit - there, taps in apps that hide from accessibility cannot be captured; add them as steps in the editor instead. JARVIS's own actions and the system shade are never recorded. |

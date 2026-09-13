@@ -67,10 +67,7 @@ object SkillRunner {
                 else StepResult(svc.longPressAt(x, y), "Long-pressed \"${labelOf(step)}\"", true)
             }
             "TEXT" -> textStep(svc, obs, step)
-            "SCROLL" -> {
-                val changed = before(svc, obs) { svc.scrollScreen(step.dir != "back") }
-                StepResult(true, "Scrolled", changed)
-            }
+            "SCROLL" -> scrollStep(svc, obs, step)
             "BACK" -> {
                 val changed = before(svc, obs) { svc.globalBack() }
                 StepResult(true, "Back", changed)
@@ -85,6 +82,22 @@ object SkillRunner {
                 StepResult(true, "Waited", false)
             }
             else -> StepResult(false, "Unknown step type ${step.type}", false)
+        }
+    }
+
+    private suspend fun scrollStep(svc: JarvisAccessibilityService, obs: ScreenObservation?, step: SkillStep): StepResult {
+        val run = { changed: Boolean -> StepResult(true, "Scrolled ${step.dir ?: "down"}", changed) }
+        when (step.dir) {
+            "left", "right" -> {
+                val m = svc.resources.displayMetrics
+                val cy = m.heightPixels / 2
+                val ok = if (step.dir == "left") svc.swipe((m.widthPixels * 0.78).toInt(), cy, (m.widthPixels * 0.22).toInt(), cy)
+                else svc.swipe((m.widthPixels * 0.22).toInt(), cy, (m.widthPixels * 0.78).toInt(), cy)
+                return if (ok) run(true) else StepResult(false, "Could not swipe ${step.dir}", false)
+            }
+            "up" -> return run(before(svc, obs) { svc.scrollScreen(false) })
+            "back" -> return run(before(svc, obs) { svc.scrollScreen(false) })
+            else -> return run(before(svc, obs) { svc.scrollScreen(true) }) // down / fwd / null
         }
     }
 

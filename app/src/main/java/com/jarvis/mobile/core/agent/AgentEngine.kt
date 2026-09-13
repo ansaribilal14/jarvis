@@ -875,16 +875,17 @@ object AgentEngine {
                         val parsed = Planner.parseDecision(text)
                         when {
                             parsed.action != null -> RoutedDecision(parsed.action, null, route.route.name)
-                            // A deliberate final answer: the JSON carried a "response" key.
-                            hasResponseKey(parsed.raw) ->
+                            // A deliberate finish: legacy {"response": ...} or the flat
+                            // {"type":"done","summary": ...} contract.
+                            parsed.definitive || hasResponseKey(parsed.raw) ->
                                 RoutedDecision(null, parsed.response?.takeIf { it.isNotBlank() } ?: "Task finished.", route.route.name)
                             // Prose, hallucinated tool, missing args, or garbage → retryable, not fatal.
                             else -> RoutedDecision(
                                 null, null, route.route.name,
                                 listOf(
-                                    "Your previous output was NOT a valid action. Respond with EXACTLY ONE JSON object: " +
-                                        "{\"thought\":\"...\",\"action\":{\"tool\":\"<name>\",\"args\":{...}}} using ONLY tools " +
-                                        "from AVAILABLE TOOLS with all their required arguments - no prose, no markdown.",
+                                    "Your previous output was NOT a valid action. Respond with EXACTLY ONE JSON object " +
+                                        "like {\"type\":\"tap\",\"x\":540,\"y\":148} (see the action list) or " +
+                                        "{\"type\":\"done\",\"summary\":\"...\"} when finished - no prose, no markdown.",
                                 ),
                             )
                         }

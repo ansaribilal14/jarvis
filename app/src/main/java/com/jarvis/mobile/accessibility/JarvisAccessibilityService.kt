@@ -1,15 +1,19 @@
 package com.jarvis.mobile.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.jarvis.mobile.core.observer.ScreenElement
 import com.jarvis.mobile.core.observer.ScreenObservation
+import com.jarvis.mobile.core.skills.JarvisAccessibilityServiceHolder
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +46,30 @@ class JarvisAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         INSTANCE = this
         CONNECTED.value = true
+        // Recorder bridge: pkg + observation providers for raw-touch enrichment.
+        JarvisAccessibilityServiceHolder.pkgProvider = { runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull() }
+        JarvisAccessibilityServiceHolder.observeProvider = { max -> runCatching { observe(max) }.getOrNull() }
+        // A recording that survived a process kill keeps running.
+        SkillRecorder.resumeIfNeeded()
+        // Raw-touch observation (API 34+): while recording, the touchscreen is
+        // observed so EVERY physical tap is captured (Tasker-grade) - even in
+        // apps that never emit view-click accessibility events.
+        scope.launch {
+            SkillRecorder.state.collect { st ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    runCatching {
+                        val wantMotion = st.active
+                        val si = serviceInfo
+                        val newSources = if (wantMotion) InputDevice.SOURCE_TOUCHSCREEN else 0
+                        if (si.motionEventSources != newSources) {
+                            si.motionEventSources = newSources
+                            serviceInfo = si
+                        }
+                        SkillRecorder.setMotionCapture(wantMotion)
+                    }.onFailure { Logx.w(TAG, "motion sources: ${it.message}") }
+                }
+            }
+        }
         Logx.i(TAG, "Accessibility service connected")
     }
 
@@ -59,6 +87,30 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {}
+
+    /**
+     * Raw touchscreen observation (API 34+ only - the system calls this when
+     * motionEventSources includes SOURCE_TOUCHSCREEN). Every physical down/
+     * move/up flows into the skill recorder; the user's taps are NOT consumed
+     * (observation, not filtering), so the phone behaves exactly as before.
+     */
+    override fun onMotionEvent(event: MotionEvent) {
+        if (!SkillRecorder.state.value.active) return
+        runCatching {
+            val pointers = event.pointerCount
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN,
+                MotionEvent.ACTION_POINTER_DOWN -> SkillRecorder.onTouchDown(
+                    event.eventTime, event.x, event.y, pointers,
+                )
+                MotionEvent.ACTION_MOVE -> SkillRecorder.onTouchMove(
+                    event.eventTime, event.x, event.y, pointers,
+                )
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> SkillRecorder.onTouchUp(event.eventTime, event.x, event.y)
+            }
+        }
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return

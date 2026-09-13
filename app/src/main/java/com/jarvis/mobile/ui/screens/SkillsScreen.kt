@@ -144,7 +144,11 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Start recording") }
                         Text(
-                            "The recorder captures taps, typing, scrolling and app switches from your touches.",
+                            "Every single tap is captured - like Tasker. Use your phone normally: " +
+                                "taps, long-presses, typing, swipes and app switches are all recorded " +
+                                "with real screen coordinates (on Android 14+ even in apps that hide " +
+                                "from accessibility). The recording keeps running while you are in " +
+                                "other apps - come back and tap Stop when done.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

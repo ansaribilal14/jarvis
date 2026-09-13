@@ -50,18 +50,34 @@ object DecisionGrammar {
         return if (clean.isEmpty()) null else clean.joinToString(" | ")
     }
 
-    /** The full OUTPUT-CONTRACT grammar for the decide stage (nested + flat forms). */
+    /** The full OUTPUT-CONTRACT grammar for the decide stage (flat v1.9 + legacy nested forms). */
     fun decisionGrammar(specs: List<ToolSpec>): String? {
         val tools = quotedLiterals(specs.map { it.name }) ?: return null
         val argKeys = quotedLiterals(specs.flatMap { s -> s.params.map { p -> p.name } }) ?: "\"x\""
+        val flatTypes = "\"tap\" | \"click\" | \"long_press\" | \"longpress\" | \"double_tap\" | \"type_text\" | \"type\" | \"scroll\" | \"swipe\" | \"button\" | \"press\" | \"open_app\" | \"launch\" | \"wait\" | \"tool\" | \"done\" | \"complete\""
+        val directions = "\"up\" | \"down\" | \"left\" | \"right\" | \"fwd\" | \"back\""
+        val buttons = "\"back\" | \"home\" | \"recents\" | \"recent\" | \"recent_apps\" | \"overview\" | \"notifications\""
         return buildString {
-            append("root ::= \"{\" ws ( member ( ws \",\" ws member )* )? ws \"}\"\n")
-            append("member ::= thought | response | action | flattool | flatargs\n")
+            append("root ::= \"{\" ws ( fmember ( ws \",\" ws fmember )* )? ws \"}\"\n")
+            append("fmember ::= thought | response | summary | action | flattool | flatargs | ftype | fx | fy | ftext | fdir | fname | fapp | fms | fdesc\n")
             append("thought ::= \"\\\"thought\\\"\" ws \":\" ws jstr\n")
             append("response ::= \"\\\"response\\\"\" ws \":\" ws jstr\n")
+            append("summary ::= \"\\\"summary\\\"\" ws \":\" ws jstr\n")
             append("action ::= \"\\\"action\\\"\" ws \":\" ws actionobj\n")
             append("flattool ::= \"\\\"tool\\\"\" ws \":\" ws toolname\n")
             append("flatargs ::= \"\\\"args\\\"\" ws \":\" ws argsobj\n")
+            append("ftype ::= \"\\\"type\\\"\" ws \":\" ws ftypeval\n")
+            append("fx ::= \"\\\"x\\\"\" ws \":\" ws jnum\n")
+            append("fy ::= \"\\\"y\\\"\" ws \":\" ws jnum\n")
+            append("ftext ::= \"\\\"text\\\"\" ws \":\" ws jstr\n")
+            append("fdir ::= \"\\\"direction\\\"\" ws \":\" ws fdirval\n")
+            append("fname ::= \"\\\"name\\\"\" ws \":\" ws ( fbtnval | toolname )\n")
+            append("fapp ::= \"\\\"app\\\"\" ws \":\" ws jstr\n")
+            append("fms ::= \"\\\"ms\\\"\" ws \":\" ws jnum\n")
+            append("fdesc ::= \"\\\"description\\\"\" ws \":\" ws jstr\n")
+            append("ftypeval ::= $flatTypes\n")
+            append("fdirval ::= $directions | jstr\n")
+            append("fbtnval ::= $buttons\n")
             append("actionobj ::= \"{\" ws \"\\\"tool\\\"\" ws \":\" ws toolname ws \",\" ws \"\\\"args\\\"\" ws \":\" ws argsobj ws \"}\"\n")
             append("toolname ::= $tools\n")
             append("argsobj ::= \"{\" ws ( argpair ( ws \",\" ws argpair )* )? ws \"}\"\n")

@@ -3,6 +3,41 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [1.9.0] - Tasker-grade skill recorder, MobileAgent-style flat action loop, any-provider API mode
+
+- **Skill recorder rebuilt: records EVERY tap (Tasker-grade).** The old recorder depended on
+  TYPE_VIEW_CLICKED accessibility events, which many apps and ROMs simply never emit - so on real
+  devices the recorder often captured nothing. Now, on Android 14+, the accessibility service
+  observes the raw touchscreen (`motionEventSources` + `onMotionEvent`): every physical down/move/up
+  is classified into TAP / LONG_PRESS / SCROLL with real screen coordinates, in every app, including
+  games, canvases and WebView surfaces that hide from accessibility. A light tree lookup then
+  enriches each raw step with the element's labels so replay stays semantic-first with coordinates
+  as ground truth. Typing still comes from TYPE_VIEW_TEXT_CHANGED (raw touch cannot read text),
+  password fields stay masked, app switches come from window transitions.
+- **Recordings survive process death.** The recording session is persisted (active flag + a JSONL
+  step file); if an aggressive ROM kills JARVIS while you are recording in another app, the service
+  resumes the session on rebind - and pressing "Stop" after such a kill still delivers the captured
+  steps instead of silently discarding them. Step cap raised 60 -> 120.
+- **MobileAgent-style flat action loop.** The decide stage now speaks the same tiny contract that
+  makes the demo MobileAgent project so effective: the screen lists interactive elements with
+  `center=(x,y)`, and the model answers ONE flat JSON action -
+  `{"type":"tap","x":540,"y":148}`, `type_text`, `scroll`, `button` (back/home/recents),
+  `open_app`, `double_tap`, `wait`, `done` - with device tools (wifi, alarms, calls, ...) reachable
+  through `{"type":"tool","name":"...","args":{...}}`. The prompt shrinks to the bone (compact tool
+  catalog instead of 45 full tool specs), taps run as verified coordinate gestures, and
+  `type_text` prefers the FOCUSED field exactly like MobileAgent. The legacy nested contract and
+  the whole salvage pipeline still parse - nothing regressed for big models.
+- **Any-provider API mode (OpenRouter / DeepSeek / NIM / Ollama / custom).** The API-mode sidebar
+  now has provider presets: OpenRouter (free `:free` models - the same free-cloud-brain route the
+  demo app uses), DeepSeek, NVIDIA NIM, Ollama on your LAN, or any custom /v1 endpoint. OpenRouter
+  requests send the recommended identification headers. The provider is generic under the hood;
+  presets just fill endpoint + model picks + key hints.
+- **New tools + richer replay.** `press_recents` and `press_notifications` join the registry; the
+  scroll tool and skill replay now understand left/right swipes (pagers, galleries, stories).
+- **Flat-contract test coverage.** New JVM suite for the flat parser (all 10 action shapes,
+  scroll directions, button mapping, unknown-tool honesty, legacy fallback) and the raw-touch
+  stroke classifier (tap/long-press/scroll/multi-pointer-ignore).
+
 ## [1.8.0] - grammar-constrained decoding, gesture completion, state machine
 
 - **GBNF grammar-constrained decoding (local route).** The planner's decide stage and the

@@ -31,6 +31,19 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
 (~21 MB); model files are downloaded separately inside the app.
 
+## What's new in v1.9.0
+
+- **The skill recorder now records EVERY single tap - like Tasker.** Raw touchscreen capture
+  (Android 14+) records taps, long-presses and swipes by real coordinates in every app, even ones
+  that never emit accessibility click events; typing and app switches still come from the tree.
+  Recordings survive the process being killed in the background.
+- **MobileAgent-style task loop.** The agent decides with a tiny flat action contract
+  (`{"type":"tap","x":540,"y":148}`) over a compact element list with `center=(x,y)` - the same
+  approach that makes the MobileAgent demo project punch far above its weight - while keeping
+  JARVIS's verification, confirmations and 45 device tools behind a one-key escape hatch.
+- **API mode now speaks to any provider.** OpenRouter (free models), DeepSeek, NVIDIA NIM,
+  Ollama on your LAN, or any custom OpenAI-compatible endpoint - one preset tap each.
+
 ## What's new in v1.8.0
 
 - **Grammar-constrained decoding.** On the local route, the planner's JSON output contract is now
