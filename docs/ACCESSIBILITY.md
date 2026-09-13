@@ -2,7 +2,22 @@
 
 ## Service
 `JarvisAccessibilityService` (flagDefault|IncludeNotImportantViews|ReportViewIds|
-RetrieveInteractiveWindows|RetrieveInteractiveWindows, canPerformGestures, canTakeScreenshot).
+RetrieveInteractiveWindows, canPerformGestures, canTakeScreenshot, canRequestTouchExplorationMode).
+
+## Precision touch capture (skill recorder, API 34+)
+- While a recording is active, the service registers a `TouchInteractionController` for the
+  default display and raises `FLAG_REQUEST_TOUCH_EXPLORATION_MODE` (the capability is declared in
+  the service config). The controller receives every touch DOWN with exact screen coordinates and
+  the service immediately calls `requestDelegating()`, which passes the interaction through to
+  the app untouched - observation without takeover.
+- `AccessibilityServiceInfo.motionEventSources` is deliberately NOT used: per the framework docs
+  that API consumes touchscreen events (they never reach apps).
+- Interposition exists ONLY while recording: stopping the recording, unbinding the service, or
+  any error in the delegation path lowers the flag first, restoring normal touch.
+- Raw DOWNs are fused with app click events by `RawTapMerger` (1.5 s / 48 px window): merged
+  steps carry semantic labels + raw coordinates; unclaimed DOWNs commit as coordinate TAPs;
+  scroll events cancel their fling's DOWN; late labels replace coordinate-only steps.
+- On Android < 14 the recorder is event-only (clicks, text, scrolls, app switches).
 
 ## Observation
 - Tree walk bounded at 320 nodes / depth 48; only visible+meaningful nodes emitted.

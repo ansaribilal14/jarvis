@@ -3,7 +3,9 @@ package com.jarvis.mobile.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.TouchInteractionController
 import android.content.Intent
+import androidx.annotation.RequiresApi
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
@@ -16,15 +18,11 @@ import com.jarvis.mobile.core.observer.ScreenObservation
 import com.jarvis.mobile.core.skills.JarvisAccessibilityServiceHolder
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.util.Logx
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -40,40 +38,33 @@ import kotlin.coroutines.resume
  */
 class JarvisAccessibilityService : AccessibilityService() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         INSTANCE = this
         CONNECTED.value = true
-        // Recorder bridge: pkg + observation providers for raw-touch enrichment.
+        // Recorder bridge: pkg + observation providers + precision capture control.
         JarvisAccessibilityServiceHolder.pkgProvider = { runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull() }
         JarvisAccessibilityServiceHolder.observeProvider = { max -> runCatching { observe(max) }.getOrNull() }
-        // A recording that survived a process kill keeps running.
-        SkillRecorder.resumeIfNeeded()
-        // Raw-touch observation (API 34+): while recording, the touchscreen is
-        // observed so EVERY physical tap is captured (Tasker-grade) - even in
-        // apps that never emit view-click accessibility events.
-        scope.launch {
-            SkillRecorder.state.collect { st ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    runCatching {
-                        val wantMotion = st.active
-                        val si = serviceInfo
-                        val newSources = if (wantMotion) InputDevice.SOURCE_TOUCHSCREEN else 0
-                        if (si.motionEventSources != newSources) {
-                            si.motionEventSources = newSources
-                            serviceInfo = si
-                        }
-                        SkillRecorder.setMotionCapture(wantMotion)
-                    }.onFailure { Logx.w(TAG, "motion sources: ${it.message}") }
-                }
-            }
+        JarvisAccessibilityServiceHolder.precisionEnable = {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) enablePrecisionCapture()
+            }.onFailure { Logx.w(TAG, "precision enable: ${it.message}") }
         }
+        JarvisAccessibilityServiceHolder.precisionDisable = {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) disablePrecisionCapture()
+            }.onFailure { Logx.w(TAG, "precision disable: ${it.message}") }
+        }
+        // A recording that survived a process kill keeps running (this also re-arms
+        // precision capture via resumeIfNeeded).
+        SkillRecorder.resumeIfNeeded()
         Logx.i(TAG, "Accessibility service connected")
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) disablePrecisionCapture()
+        }
         INSTANCE = null
         CONNECTED.value = false
         Logx.w(TAG, "Accessibility service disconnected")
@@ -81,6 +72,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) disablePrecisionCapture()
+        }
         INSTANCE = null
         CONNECTED.value = false
         super.onDestroy()
@@ -88,28 +82,80 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    /**
-     * Raw touchscreen observation (API 34+ only - the system calls this when
-     * motionEventSources includes SOURCE_TOUCHSCREEN). Every physical down/
-     * move/up flows into the skill recorder; the user's taps are NOT consumed
-     * (observation, not filtering), so the phone behaves exactly as before.
-     */
-    override fun onMotionEvent(event: MotionEvent) {
-        if (!SkillRecorder.state.value.active) return
+    // ------------------------------------------------ precision touch capture
+
+    // API 34+ raw tap capture, TalkBack-style: while recording, a
+    // TouchInteractionController receives every touch DOWN (exact coordinates),
+    // and we IMMEDIATELY delegate the interaction back to the system, so the
+    // user's tap reaches the app completely untouched. Without delegation the
+    // framework would hold the user's touches (that is the takeover mode screen
+    // readers use) - delegation-on-down is what makes observation safe.
+    // NOTE: AccessibilityServiceInfo.motionEventSources is NOT used - that API
+    // CONSUMES touchscreen events (they never reach the apps).
+    private var precisionCallback: TouchInteractionController.Callback? = null
+    private val precisionExecutor: java.util.concurrent.Executor by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "jarvis-precision") }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun enablePrecisionCapture() {
         runCatching {
-            val pointers = event.pointerCount
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN,
-                MotionEvent.ACTION_POINTER_DOWN -> SkillRecorder.onTouchDown(
-                    event.eventTime, event.x, event.y, pointers,
-                )
-                MotionEvent.ACTION_MOVE -> SkillRecorder.onTouchMove(
-                    event.eventTime, event.x, event.y, pointers,
-                )
-                MotionEvent.ACTION_UP,
-                MotionEvent.ACTION_CANCEL -> SkillRecorder.onTouchUp(event.eventTime, event.x, event.y)
+            val controller = getTouchInteractionController(android.view.Display.DEFAULT_DISPLAY)
+            if (precisionCallback == null) {
+                val cb = object : TouchInteractionController.Callback {
+                    override fun onMotionEvent(event: MotionEvent) {
+                        if (event.actionMasked != MotionEvent.ACTION_DOWN) return
+                        // Delegate FIRST so the interaction passes through to the app
+                        // even if the recorder path below throws.
+                        runCatching {
+                            if (controller.state == TouchInteractionController.STATE_TOUCH_INTERACTING) {
+                                controller.requestDelegating()
+                            }
+                        }.onFailure {
+                            Logx.w(TAG, "delegate failed - precision capture disabled: ${it.message}")
+                            disablePrecisionCapture()
+                            return
+                        }
+                        if (event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)) {
+                            SkillRecorder.onRawDown(
+                                System.currentTimeMillis(), event.x, event.y,
+                            )
+                        }
+                    }
+
+                    override fun onStateChanged(state: Int) {}
+                }
+                precisionCallback = cb
+                controller.registerCallback(precisionExecutor, cb)
             }
+            // Interposition begins only when this flag is on (capability declared
+            // in accessibility_service_config.xml); before that, touches pass
+            // through unaltered and the controller simply sees nothing.
+            serviceInfo = serviceInfo.apply {
+                flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE
+            }
+            SkillRecorder.setPrecision(true)
+        }.onFailure {
+            Logx.w(TAG, "precision capture unavailable (${it.message}) - event fallback stays on")
+            disablePrecisionCapture()
         }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun disablePrecisionCapture() {
+        // Flag OFF first: normal touch interaction is restored even if the rest fails.
+        runCatching {
+            serviceInfo = serviceInfo.apply {
+                flags = flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE.inv()
+            }
+        }.onFailure { Logx.w(TAG, "precision flag off failed: ${it.message}") }
+        runCatching {
+            precisionCallback?.let { cb ->
+                getTouchInteractionController(android.view.Display.DEFAULT_DISPLAY).unregisterCallback(cb)
+            }
+        }.onFailure { Logx.w(TAG, "precision unregister failed: ${it.message}") }
+        precisionCallback = null
+        SkillRecorder.setPrecision(false)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

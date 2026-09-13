@@ -24,6 +24,7 @@ data class SkillStep(
     val input: String? = null,  // typed text (TEXT steps)
     val dir: String? = null,    // scroll direction: fwd / back
     val waitMs: Long? = null,   // WAIT duration / observed gap before this step
+    val t: Long? = null,        // capture time (ms, device clock) - dedup + ordering aid
 ) {
     /** Human-readable one-liner for lists, drafts and the activity feed. */
     fun describe(): String = when (type) {

@@ -3,6 +3,36 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [1.10.0] - Recorder actually fixed: precision touch capture (the v1.9 mechanism was broken)
+
+- **Honest root cause of "records nothing".** v1.9's raw-touch layer used
+  `AccessibilityServiceInfo.motionEventSources` - but per the Android framework docs that API
+  **consumes** touchscreen events instead of observing them ("MotionEvents from sources in
+  getMotionEventSources() are not sent to the rest of the system"), and a runtime
+  `setServiceInfo` update never took effect on real devices. Worse, the recorder flagged raw
+  capture as "on" optimistically and that flag **suppressed the working event fallback** - so on
+  an Android 14+ device both layers ended up recording nothing. This release removes that
+  mechanism entirely and never lets one layer silence the other.
+- **Precision touch capture (Android 14+), the safe way.** While recording, the service registers
+  a `TouchInteractionController` (the TalkBack-grade touch pipeline) and on every touch DOWN
+  records the exact screen coordinates, then IMMEDIATELY delegates the interaction back to the
+  system - the user's tap reaches the app completely untouched. Result: every single tap is
+  captured with real coordinates in EVERY app - games, canvases, WebView, launchers - exactly
+  like a macro recorder. The touch-exploration capability is declared in the service config;
+  interposition is active ONLY while a recording is running and is reverted first on stop, on
+  unbind, on any error.
+- **Fusion instead of suppression.** A pure-JVM `RawTapMerger` fuses the layers: a raw DOWN plus
+  a matching click/long-click event within 1.5 s / 48 px becomes ONE semantic step (labels +
+  raw coordinates); an unclaimed raw DOWN commits as a coordinate TAP; a scroll event cancels its
+  fling's DOWN so no bogus tap is recorded; a late label event replaces the coordinate-only step.
+- **Guaranteed baseline layer.** App-event capture (TYPE_VIEW_CLICKED / LONG_CLICKED / TEXT /
+  SCROLL / APP_OPEN) now works on every device and is never disabled by an unverified flag.
+- **Honest UI status.** The REC card now shows the live capture mode - "Precision capture ON -
+  N touches seen (every tap, in every app)" vs "App-event capture ..." - so "is it recording?"
+  is always answerable at a glance; a warning appears when the accessibility service is off.
+- Tests: 8 new JVM cases covering merge, window commit, late replace, scroll-cancel, rapid
+  double taps and flush.
+
 ## [1.9.0] - Tasker-grade skill recorder, MobileAgent-style flat action loop, any-provider API mode
 
 - **Skill recorder rebuilt: records EVERY tap (Tasker-grade).** The old recorder depended on

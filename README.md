@@ -31,6 +31,14 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
 (~21 MB); model files are downloaded separately inside the app.
 
+## What's new in v1.10.0
+
+- **The recorder fix that actually fixes it.** v1.9's raw-touch mechanism turned out to consume
+  touches and silence the fallback - on Android 14+ it could record nothing at all. v1.10 replaces
+  it with precision touch capture: every tap's exact coordinates are recorded in every app while
+  your touches still reach the apps untouched, fused with app events into clean semantic steps.
+  The REC card now shows live capture status so you always know it is recording.
+
 ## What's new in v1.9.0
 
 - **The skill recorder now records EVERY single tap - like Tasker.** Raw touchscreen capture

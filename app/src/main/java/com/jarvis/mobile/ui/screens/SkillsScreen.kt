@@ -81,6 +81,17 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                 }
                 when {
                     rec.active -> {
+                        // Honest capture-mode status - the user should never have to
+                        // guess whether anything is being recorded.
+                        Text(
+                            when {
+                                rec.precisionActive -> "Precision capture ON - ${rec.rawTaps} touches seen (every tap, in every app)"
+                                android.os.Build.VERSION.SDK_INT >= 34 -> "App-event capture - buttons, typing, scrolls, app switches (raw touch unavailable on this device)"
+                                else -> "App-event capture - button taps, typing, scrolls and app switches (exact touch capture needs Android 14+)"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (rec.precisionActive) Accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         if (rec.steps.isNotEmpty()) {
                             rec.steps.takeLast(4).forEach { step ->
                                 Text(
@@ -138,6 +149,13 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                         }
                     }
                     else -> {
+                        if (!com.jarvis.mobile.accessibility.JarvisAccessibilityService.CONNECTED.value) {
+                            Text(
+                                "⚠ Enable JARVIS in Settings → Accessibility first - recording needs it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Danger,
+                            )
+                        }
                         Button(
                             onClick = { SkillRecorder.start() },
                             enabled = AgentEngine.isRunning().not(),
