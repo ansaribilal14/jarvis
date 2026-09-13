@@ -34,13 +34,13 @@ object AgentStateMachine {
             AgentStatus.WAITING_CONFIRMATION, AgentStatus.COMPLETED, AgentStatus.FAILED, AgentStatus.STOPPED,
         ),
         AgentStatus.COMPLETED to setOf(
-            AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
+            AgentStatus.COMPLETED, AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
         ),
         AgentStatus.FAILED to setOf(
-            AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
+            AgentStatus.FAILED, AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
         ),
         AgentStatus.STOPPED to setOf(
-            AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
+            AgentStatus.STOPPED, AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
         ),
     )
 
