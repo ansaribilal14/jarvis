@@ -10,7 +10,7 @@ RetrieveInteractiveWindows|RetrieveInteractiveWindows, canPerformGestures, canTa
   text, contentDescription, viewId, bounds, clickable/editable/scrollable/selected/password.
 - Password nodes are flagged and their text is never extracted.
 - Compact representation for the planner: `[12] role=button text="Send"` — and every
-  element carries its `@(centerX,centerY)` tap point plus a short viewId, so the model
+  element carries its `center=(x,y)` tap point plus a short viewId, so the model
   can act even on undescribed surfaces. A `fingerprint()` supports change detection
   between rounds.
 

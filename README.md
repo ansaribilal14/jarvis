@@ -83,7 +83,7 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 |---|---|
 | Natural-language phone control | On-device llama.cpp planner picks ONE registered tool per step from 45 real tools |
 | Plan-first compound goals | Multi-step requests get an explicit ≤6-step plan; every step is still grounded against a fresh observation |
-| Screen understanding | Accessibility tree → structured element list with semantic handles AND `@(x,y)` coordinates (coordinate tap as last resort) |
+| Screen understanding | Accessibility tree → compact element list with `center=(x,y)` per line; the agent answers flat actions (`tap x/y`, `type_text`, `scroll`, ...) executed as verified gestures |
 | Phone automation | tap / double-tap / type / scroll / back / home / open app / launch intents — app-agnostic, works on any app |
 | Contacts & messaging | call / SMS / WhatsApp / Telegram / email via contact resolver with nickname support — messages are drafts, human presses send |
 | Media, nav & system | YouTube search, Google Maps navigation, alarms, timers, media play/pause, screenshots, Do-Not-Disturb |
