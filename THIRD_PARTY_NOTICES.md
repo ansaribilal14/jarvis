@@ -16,8 +16,8 @@
 | Model | License | Source |
 |---|---|---|
 | Qwen2.5-0.5B/1.5B/3B-Instruct GGUF | Qwen Research / Apache-2.0 per repo | Qwen on HuggingFace |
-| SmolLM2-1.7B-Instruct GGUF | Apache-2.0 | HuggingFaceTB on HuggingFace |
-| Llama-3.2-3B-Instruct GGUF (bartowski quant) | Llama 3.2 Community License | Meta / bartowski on HuggingFace |
+| SmolLM2-360M / 1.7B-Instruct GGUF | Apache-2.0 | HuggingFaceTB on HuggingFace |
+| Llama-3.2-1B / 3B-Instruct GGUF (bartowski quants) | Llama 3.2 Community License | Meta / bartowski on HuggingFace |
 
 Users accept the respective model licenses when downloading them in-app.
 

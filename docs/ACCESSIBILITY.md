@@ -9,12 +9,18 @@ RetrieveInteractiveWindows|RetrieveInteractiveWindows, canPerformGestures, canTa
 - Elements: role (button/edittext/text/image/checkbox/toggle/dropdown/web/list/other),
   text, contentDescription, viewId, bounds, clickable/editable/scrollable/selected/password.
 - Password nodes are flagged and their text is never extracted.
-- Compact representation for the planner: `[12] role=button text="Send"`.
+- Compact representation for the planner: `[12] role=button text="Send"` — and every
+  element carries its `@(centerX,centerY)` tap point plus a short viewId, so the model
+  can act even on undescribed surfaces. A `fingerprint()` supports change detection
+  between rounds.
 
 ## Actions
 - Semantic first: resolve element by identity re-match against a fresh observation, then
   ACTION_CLICK / ACTION_SET_TEXT / ACTION_SCROLL_*.
-- Gesture fallback: dispatchGesture tap/swipe/long-press (verified after dispatch).
+- Gesture fallback: dispatchGesture tap/swipe/long-press (verified after dispatch) —
+  tap accepts explicit x/y coordinates as the last resort for surfaces the tree cannot
+  describe; `double_tap` is a single two-stroke gesture.
+- Typing taps the focused field first and retries if the editor was not focused.
 - Global: back / home / recents / notification shade.
 - Copy: ACTION_SELECT_ALL + ACTION_COPY on nodes; paste via ACTION_PASTE.
 
