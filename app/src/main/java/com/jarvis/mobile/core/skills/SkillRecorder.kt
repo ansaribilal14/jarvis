@@ -181,7 +181,7 @@ object SkillRecorder {
         val (type, ex, ey, durMs) = touch.end(t, x, y) ?: return
         when (type) {
             "TAP", "LONG_PRESS" -> {
-                val step = SkillStep(type = type, pkg = currentPkg(), x = ex, y = ey)
+                val step = SkillStep(type = type, pkg = currentPkg(), x = ex.toInt(), y = ey.toInt())
                 addStep(step)
                 enrichAsync(step, ex, ey)
             }
@@ -189,7 +189,8 @@ object SkillRecorder {
                 val now = System.currentTimeMillis()
                 if (now - lastScrollAtMs > 500) {
                     lastScrollAtMs = now
-                    addStep(SkillStep(type = "SCROLL", pkg = currentPkg(), dir = directionOf(ex, ey), x = ex, y = ey))
+                    // ex/ey here are DELTAS (direction), not screen points - never store them as x/y.
+                    addStep(SkillStep(type = "SCROLL", pkg = currentPkg(), dir = directionOf(ex, ey)))
                 }
             }
         }
