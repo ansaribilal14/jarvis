@@ -217,8 +217,12 @@ class FlatContractTest {
     fun `grammar embeds flat action vocabulary`() {
         val g = DecisionGrammar.decisionGrammar(specs.values.toList())
         assertNotNull(g)
-        listOf("\"tap\"", "\"done\"", "\"type_text\"", "\"direction\"", "\"open_app\"", "\"summary\"")
-            .forEach { token -> assertTrue("grammar must contain $token", g!!.contains(token)) }
+        // Value literals are plain GBNF quotes: "tap", "done", ...
+        listOf("tap", "done", "type_text", "open_app")
+            .forEach { token -> assertTrue("grammar must contain \"$token\"", g!!.contains("\"$token\"")) }
+        // Key-name literals are quote-escaped GBNF: \"direction\", \"summary\", ...
+        listOf("direction", "summary", "description", "type")
+            .forEach { key -> assertTrue("grammar must contain \\\"$key\\\"", g!!.contains("\\\"$key\\\"")) }
     }
 
     @Test
