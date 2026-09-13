@@ -10,6 +10,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.jarvis.mobile.core.observer.ScreenElement
 import com.jarvis.mobile.core.observer.ScreenObservation
+import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +61,11 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
+        // Skill recorder tap: meaningful user actions in OTHER apps feed the recorder
+        // while it is active (it self-filters JARVIS/systemui + agent actions).
+        if (SkillRecorder.state.value.active) {
+            runCatching { SkillRecorder.onAccessibilityEvent(e, packageName) }
+        }
         when (e.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val pkg = e.packageName?.toString()

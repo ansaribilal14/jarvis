@@ -145,12 +145,23 @@ class LlamaCppProvider(
     /** Benchmark: tokens/sec over a fixed tool-planning style prompt. */
     suspend fun benchmark(): Result<Double> = withContext(Dispatchers.Default) {
         if (!isReady()) return@withContext Result.failure(IllegalStateException("No model loaded"))
-        val prompt = "USER TASK: open chrome and search for local ai. Respond with one JSON action only."
-        val start = System.currentTimeMillis()
-        val res = LlamaBridge.nativeComplete(prompt, 64, null, emptyArray())
-        val ms = System.currentTimeMillis() - start
-        if (res == null) Result.failure(IllegalStateException("Benchmark generation failed"))
-        else Result.success(64_000.0 / ms.coerceAtLeast(1))
+        // Expert-review fix: benchmark runs nativeComplete directly - it MUST hold
+        // the same single-flight guard as generate(), or "Benchmark" tapped during
+        // a task = two threads on one llama_context = SIGSEGV.
+        if (!generating.compareAndSet(false, true)) {
+            return@withContext Result.failure(IllegalStateException("A task is using the model right now"))
+        }
+        try {
+            val prompt = "USER TASK: open chrome and search for local ai. Respond with one JSON action only."
+            val start = System.currentTimeMillis()
+            val res = LlamaBridge.nativeComplete(prompt, 64, null, emptyArray())
+            val ms = System.currentTimeMillis() - start
+            if (res == null) Result.failure(IllegalStateException("Benchmark generation failed"))
+            else Result.success(64_000.0 / ms.coerceAtLeast(1))
+        } finally {
+            generating.set(false)
+            lastUsed.set(System.currentTimeMillis())
+        }
     }
 
     companion object {

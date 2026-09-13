@@ -353,8 +353,19 @@ class ModelManager(
     /** Import a .gguf from a SAF uri (copied into models dir; checksum pinned after first verified run). */
     suspend fun import(uri: android.net.Uri): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
-            val name = queryDisplayName(uri) ?: "imported-${System.currentTimeMillis()}.gguf"
-            val target = File(modelsDir(), name)
+            // Expert-review hygiene: SAF display names are untrusted input.
+            // Strip any path component (a "/" or ".." would escape the models
+            // dir), force a .gguf suffix, and never overwrite an existing file.
+            val raw = queryDisplayName(uri) ?: "imported-${System.currentTimeMillis()}.gguf"
+            val safeBase = File(raw).name.removeSuffix(".gguf").removeSuffix(".GGUF")
+                .replace(Regex("[\\x00-\\x1f\\\\/]"), "_").ifBlank { "imported" }
+            var target = File(modelsDir(), "$safeBase.gguf")
+            if (target.exists()) target = File(modelsDir(), "$safeBase-${System.currentTimeMillis()}.gguf")
+            // Multi-GB copy with no space left = truncated junk file; precheck first.
+            val stat = android.os.StatFs(modelsDir().absolutePath)
+            if (stat.availableBytes < 512L * 1024 * 1024) {
+                throw java.io.IOException("Not enough free storage (need at least 512 MB free)")
+            }
             context.contentResolver.openInputStream(uri)!!.use { input ->
                 target.outputStream().use { output -> input.copyTo(output, 512 * 1024) }
             }
@@ -367,7 +378,7 @@ class ModelManager(
                     throw IOException("Not a GGUF model file")
                 }
             }
-            Logx.i(TAG, "Imported model $name (${target.length() / 1024 / 1024} MB)")
+            Logx.i(TAG, "Imported model ${target.name} (${target.length() / 1024 / 1024} MB)")
             target
         }.onFailure { Logx.e(TAG, "Import failed: ${it.message}") }
     }

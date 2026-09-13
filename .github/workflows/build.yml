@@ -32,6 +32,11 @@ jobs:
       - name: Build debug APK + unit tests
         run: ./gradlew assembleDebug testDebugUnitTest --no-daemon --stacktrace
 
+      # R8/JNI breakage class (the v1.5.0 test-button bug) only appears in the
+      # minified variant - build it here so it fails BEFORE a release publishes.
+      - name: Build minified release (CI gate)
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:

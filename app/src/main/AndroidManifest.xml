@@ -88,6 +88,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Skill recorder: backs the "Stop recording" action on the REC notification. -->
+        <receiver
+            android:name=".core.skills.SkillRecReceiver"
+            android:exported="false" />
+
         <service
             android:name=".accessibility.JarvisAccessibilityService"
             android:exported="true"

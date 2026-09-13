@@ -17,9 +17,17 @@ object DeterministicPlanner {
     data class Rule(val regex: Regex, val build: (MatchResult) -> PlannedAction?)
 
     private val rules = listOf(
-        Rule(Regex("(?i)open (the )?(.+?)( app)?$")) { m ->
-            m.groupValues[2].trim().takeIf { it.isNotBlank() }?.let {
-                PlannedAction("open_app", buildJsonObject { put("app", it) })
+        // Anchored + compound-guarded (v1.7): "open chrome and set an alarm" used
+        // to become open_app("chrome and set an alarm") - a guaranteed failure.
+        // Compound requests are NOT covered here; the agent/rule rescue handles them.
+        Rule(Regex("(?i)^open (?:the )?(.+?)(?: app)?$")) { m ->
+            val target = m.groupValues[1].trim()
+            if (target.isBlank() || Planner.isCompoundGoal(m.value) ||
+                target.contains(" and ", true) || target.contains(" then ", true)
+            ) {
+                null
+            } else {
+                PlannedAction("open_app", buildJsonObject { put("app", target) })
             }
         },
         Rule(Regex("(?i)set brightness to (\\d+)")) { m ->

@@ -221,12 +221,17 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
         return nullptr;
     }
 
-    // Context guard: trim from the head (keep most recent context) if oversized.
+    // Context guard (v1.7): when the prompt exceeds the budget, cut the MIDDLE,
+    // not the head. The head carries the system prompt + OUTPUT CONTRACT -
+    // deleting it first is exactly how tiny-context devices ended up echoing
+    // screen data instead of producing the required JSON (v1.6.0 symptom).
     const int budget = std::max(16, n_ctx - max_tokens - 8);
     if (n_prompt > budget) {
         const int overflow = n_prompt - budget;
-        tokens.erase(tokens.begin(), tokens.begin() + overflow);
+        const int headKeep = std::min(n_prompt * 2 / 5, std::max(8, budget - 8));
+        tokens.erase(tokens.begin() + headKeep, tokens.begin() + headKeep + overflow);
         n_prompt -= overflow;
+        LOGW("prompt trim: dropped %d MIDDLE tokens (kept %d head + tail contract)", overflow, headKeep);
     }
 
     llama_kv_cache_clear(g_ctx);

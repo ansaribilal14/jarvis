@@ -23,6 +23,7 @@ real device, run the TESTING.md scenario list.
 ## Version history (shipped)
 | version | code | theme |
 |---|---|---|
+| v1.7.0 | 11 | skill recorder + /grill-me + expert-review hardening |
 | v1.6.1 | 10 | model auto-reload, state-aware fallbacks (v1.6.0 changes folded in; tag skipped) |
 | v1.5.0 | 8 | Test-model JNI fix, perf-core threads, fast models, NVIDIA NIM API mode |
 | v1.4.0 | 7 | plan-first compound goals, contacts/comms, media/nav/system tools |

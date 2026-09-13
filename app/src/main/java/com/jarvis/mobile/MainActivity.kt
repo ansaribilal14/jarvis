@@ -28,6 +28,7 @@ import com.jarvis.mobile.service.OverlayService
 import com.jarvis.mobile.ui.navigation.Dest
 import com.jarvis.mobile.ui.screens.AboutScreen
 import com.jarvis.mobile.ui.screens.DoctorScreen
+import com.jarvis.mobile.ui.screens.GrillMeScreen
 import com.jarvis.mobile.ui.screens.HistoryScreen
 import com.jarvis.mobile.ui.screens.HomeScreen
 import com.jarvis.mobile.ui.screens.MemoryScreen
@@ -35,6 +36,8 @@ import com.jarvis.mobile.ui.screens.ModelsScreen
 import com.jarvis.mobile.ui.screens.OnboardingScreen
 import com.jarvis.mobile.ui.screens.RoutinesScreen
 import com.jarvis.mobile.ui.screens.SettingsScreen
+import com.jarvis.mobile.ui.screens.SkillDraftScreen
+import com.jarvis.mobile.ui.screens.SkillsScreen
 import com.jarvis.mobile.ui.theme.JarvisTheme
 
 class MainActivity : ComponentActivity() {
@@ -129,6 +132,9 @@ private fun App(onboarded: Boolean) {
                     .background(MaterialTheme.colorScheme.background),
             ) {
                 composable(Dest.Home.route) { HomeScreen(openTab = { r -> nav.navigate(r) { launchSingleTop = true } }) }
+                composable("skills") { SkillsScreen(openTab = { r -> nav.navigate(r) { launchSingleTop = true } }) }
+                composable("grill_me") { GrillMeScreen(onClose = { nav.popBackStack() }) }
+                composable("skill_draft") { SkillDraftScreen(onClose = { nav.popBackStack() }) }
                 composable(Dest.Onboarding.route) { OnboardingScreen(onDone = { nav.navigate(Dest.Home.route) { popUpTo(0) } }) }
                 composable(Dest.Models.route) { ModelsScreen() }
                 composable(Dest.History.route) { HistoryScreen() }

@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.core.agent.AgentEngine
+import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.core.agent.AgentStatus
 import com.jarvis.mobile.core.voice.SpeechInput
 import com.jarvis.mobile.ui.components.ChipState
@@ -315,6 +316,46 @@ fun HomeScreen(openTab: (String) -> Unit) {
                     ) {
                         Text(cmd, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
                     }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
+
+        // Skill recorder (v1.7): record your actions once, replay any time.
+        if (!busy) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    onClick = {
+                        if (!com.jarvis.mobile.core.skills.SkillRecorder.state.value.active) {
+                            SkillRecorder.start()
+                        }
+                        openTab("skills")
+                    },
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val recActive = SkillRecorder.state.collectAsState().value.active
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(if (recActive) Danger else Accent))
+                        Text(
+                            if (recActive) "Recording… open" else "Record a skill",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    onClick = { openTab("skills") },
+                ) {
+                    Text("Skills", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
                 }
             }
             Spacer(Modifier.height(14.dp))

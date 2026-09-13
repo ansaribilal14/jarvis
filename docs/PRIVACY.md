@@ -23,6 +23,12 @@ Neither is ever used implicitly. When LOCAL ONLY is re-enabled, remote calls are
 hard-blocked at the provider level (not just hidden in UI), and API failures fall back
 to local/rules instead of retrying in the background.
 
+## Skills (recordings)
+Skills are stored as JSON in the app's private storage and never leave the device.
+A recording can contain text you typed (search terms, message drafts); password fields
+are masked ([PROTECTED]) and skills are user-inspectable, user-editable and deletable
+from the Skills screen.
+
 ## Data removal
 Memory tab: delete facts, purge history. Uninstalling removes everything (no external
 storage writes except nothing; models live in app-private storage).

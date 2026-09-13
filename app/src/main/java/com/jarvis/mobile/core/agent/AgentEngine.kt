@@ -9,12 +9,18 @@ import com.jarvis.mobile.core.planner.factsBlock
 import com.jarvis.mobile.core.routing.ModelRouter
 import com.jarvis.mobile.core.safety.InjectionGuard
 import com.jarvis.mobile.core.safety.RiskClassifier
+import com.jarvis.mobile.core.skills.SkillDefinition
+import com.jarvis.mobile.core.skills.SkillRecorder
+import com.jarvis.mobile.core.skills.SkillRunner
+import com.jarvis.mobile.core.skills.SkillStep
+import com.jarvis.mobile.core.skills.SkillStore
 import com.jarvis.mobile.core.tools.PlannedAction
 import com.jarvis.mobile.core.tools.ToolContext
 import com.jarvis.mobile.core.tools.ToolRegistry
 import com.jarvis.mobile.core.tools.ToolResult
 import com.jarvis.mobile.core.tools.ToolStatus
 import com.jarvis.mobile.core.tools.Verification
+import kotlinx.serialization.json.put
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -91,7 +97,8 @@ object AgentEngine {
     private val _confirmations = MutableSharedFlow<ConfirmationRequest>(extraBufferCapacity = 4)
     val confirmations: SharedFlow<ConfirmationRequest> = _confirmations
 
-    private var job: Job? = null
+    /** Single task slot, CAS-guarded: Telegram + voice + routines can race, the loser is refused loudly. */
+    private val job = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     @Volatile private var stopped = false
     @Volatile private var diverged = false
     @Volatile private var slowWarned = false
@@ -152,13 +159,13 @@ object AgentEngine {
         c.modelManager.startIdleWatchdog()
     }
 
-    fun isRunning(): Boolean = job?.isActive == true
+    fun isRunning(): Boolean = job.get()?.isActive == true
 
     fun stop() {
         stopped = true
         router.cancelLocal()
         ConfirmationManager.cancelAll()
-        job?.cancel()
+        job.getAndSet(null)?.cancel()
         commit {
             it.copy(
                 status = AgentStatus.STOPPED,
@@ -189,9 +196,37 @@ object AgentEngine {
         diverged = false
         slowWarned = false
         compactAnnounced = false
-        job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-            execute(goal, source)
+        if (!launchTask { execute(goal, source) }) {
+            Logx.w(TAG, "Task slot race lost - refusing to double-run")
         }
+    }
+
+    /** CAS the single task slot; the loser coroutine is cancelled, never double-run. */
+    private fun launchTask(block: suspend () -> Unit): Boolean {
+        val j = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch { block() }
+        return if (job.compareAndSet(null, j)) true else {
+            j.cancel()
+            false
+        }
+    }
+
+    /**
+     * Replay a saved skill: deterministic recorded steps, live progress, per-step
+     * verification, risky steps still confirm. The 2025 app-agent pattern: on a
+     * failed step the skill retries once, then stops honestly instead of guessing
+     * blindly through a UI that no longer matches the recording.
+     */
+    fun runSkill(skill: SkillDefinition): Boolean {
+        if (isRunning()) {
+            Logx.w(TAG, "Skill requested while busy: ignored (stop first)")
+            event("A task is already running - stop it first", "warn")
+            return false
+        }
+        stopped = false
+        diverged = false
+        slowWarned = false
+        compactAnnounced = false
+        return launchTask { executeSkill(skill) }
     }
 
     /** Strict whole-utterance matcher: ONLY pure notification-reading requests bypass the AI. */
@@ -215,7 +250,7 @@ object AgentEngine {
         stopped = false
         diverged = false
         slowWarned = false
-        job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+        if (!launchTask {
             val startMs = System.currentTimeMillis()
             taskStartMs = startMs
             synchronized(stateLock) { taskEvents.clear() }
@@ -265,7 +300,165 @@ object AgentEngine {
             c.memory.addChat("JARVIS", response, taskId)
             c.voiceOutput.speak(response.take(180))
             ticker.cancel()
+        }) {
+            Logx.w(TAG, "Direct path race lost")
         }
+    }
+
+    /**
+     * Deterministic replay with the full safety net: per-step observation,
+     * risk classification + confirmations for typing-class steps, live events,
+     * one retry on failure, honest partial/failed outcomes.
+     */
+    private suspend fun executeSkill(skill: SkillDefinition) = coroutineScope {
+        SkillRecorder.suppress = true // never record our own replay
+        val startMs = System.currentTimeMillis()
+        taskStartMs = startMs
+        synchronized(stateLock) { taskEvents.clear() }
+        val goalLabel = "Skill: ${skill.name}"
+        val taskId = c.memory.startTask(goalLabel, "SKILL")
+        c.memory.addChat("USER", "Run skill \"${skill.name}\"", taskId)
+        val total = skill.steps.size
+        val steps = mutableListOf<StepUi>()
+
+        fun update(f: (AgentUiState) -> AgentUiState) {
+            synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList()) }
+        }
+
+        val ticker = launch {
+            while (isActive) {
+                delay(1000)
+                commit { it.copy(elapsedMs = System.currentTimeMillis() - startMs) }
+            }
+        }
+
+        update {
+            it.copy(
+                status = AgentStatus.THINKING, goal = goalLabel, finalResponse = null, route = "SKILL",
+                startedAtMs = startMs, elapsedMs = 0, stepIndex = 0, stepBudget = total,
+                thinkingDetail = null, events = emptyList(), confirmation = null,
+            )
+        }
+        event("Replaying skill \"${skill.name}\" (${total} steps)", "ok")
+        com.jarvis.mobile.service.AgentForegroundService.start("Running skill: ${skill.name}")
+        c.voiceOutput.speak("Running ${skill.name}.")
+        Logx.i(TAG, "Skill start: \"${skill.name}\" ($total steps)")
+
+        val autoApprove = runCatching { c.settings.autoApproveMedium.first() }.getOrDefault(false)
+        var ok = 0
+        var failed = 0
+        var unverified = 0
+        var declined = false
+        var aborted: String? = null
+
+        try {
+            for ((index, step) in skill.steps.withIndex()) {
+                if (stopped) break
+                // 1. OBSERVE fresh state for this step (recording may be stale).
+                val obs = if (JarvisAccessibilityService.isReady) {
+                    withTimeoutOrNull(2500) { JarvisAccessibilityService.INSTANCE?.observe() }
+                } else null
+
+                // 2. RISK: replaying is still acting - typing-class steps confirm.
+                val risk = RiskClassifier.classify(skillSpecFor(step), skillArgsFor(step), obs?.packageName ?: step.pkg)
+                if (RiskClassifier.requiresConfirmation(risk, autoApprove)) {
+                    event("Step ${index + 1} needs your confirmation", "warn")
+                    val approved = ConfirmationManager.request(
+                        what = "Skill step ${index + 1}/$total: ${step.describe()}",
+                        target = obs?.packageName ?: step.pkg ?: "system",
+                        details = step.describe().take(220),
+                        why = RiskClassifier.whyConfirmation(skillSpecFor(step), risk, skillArgsFor(step)),
+                        risk = risk.name,
+                    )
+                    update { it.copy(confirmation = null) }
+                    if (!approved) {
+                        declined = true
+                        aborted = "You declined step ${index + 1}. Skill stopped safely."
+                        event("Step declined - skill stopped safely", "warn")
+                        break
+                    }
+                }
+
+                // 3. ACT (with one honest retry on failure).
+                update { it.copy(status = AgentStatus.ACTING, activeTool = step.type.lowercase(), currentApp = obs?.packageName, stepIndex = index + 1) }
+                steps.add(StepUi(index + 1, step.type.lowercase(), step.describe(), "RUNNING"))
+                update { it }
+                event("Step ${index + 1}/$total: ${step.describe()}")
+
+                var result = withTimeoutOrNull(20_000) { SkillRunner.runStep(step, obs) }
+                    ?: SkillRunner.StepResult(false, "Step timed out after 20s", false)
+                if (!result.ok && !stopped) {
+                    event("Step failed (${result.message.take(80)}) - retrying once…", "warn")
+                    val obs2 = if (JarvisAccessibilityService.isReady) {
+                        withTimeoutOrNull(2500) { JarvisAccessibilityService.INSTANCE?.observe() }
+                    } else null
+                    delay(400)
+                    result = withTimeoutOrNull(20_000) { SkillRunner.runStep(step, obs2) }
+                        ?: SkillRunner.StepResult(false, "Step timed out after 20s", false)
+                }
+
+                // 4. RECORD honestly.
+                if (result.ok) {
+                    ok++
+                    if (!result.verified) unverified++
+                } else failed++
+                steps[steps.size - 1] = steps.last().copy(
+                    status = if (result.ok) "SUCCESS" else "FAILED",
+                    verdict = result.message.take(120),
+                )
+                update { it }
+                event(
+                    if (result.ok) "Done: ${result.message.take(90)}" else "Step ${index + 1} failed: ${result.message.take(90)}",
+                    if (result.ok) "ok" else "err",
+                )
+                c.memory.addStep(
+                    taskId, index + 1, "skill.${step.type.lowercase()}", step.describe(),
+                    if (result.ok) "SUCCESS" else "FAILED", result.message,
+                    if (result.verified) "VERIFIED" else if (result.ok) "UNVERIFIED" else "FAILED",
+                )
+                if (!result.ok) {
+                    aborted = "Step ${index + 1} failed twice (${result.message.take(100)}). " +
+                        "The screen likely no longer matches the recording."
+                    event("Aborting: a replayed step failed twice - replay continues only when the screen matches", "err")
+                    break
+                }
+            }
+
+            val summary = when {
+                declined -> aborted ?: "Stopped by user."
+                aborted != null -> "Skill \"${skill.name}\" stopped early: $aborted ($ok of $total steps succeeded" +
+                    (if (unverified > 0) ", $unverified unverified" else "") + ")."
+                failed == 0 && ok == total -> "Skill \"${skill.name}\" completed: all $total steps succeeded" +
+                    (if (unverified > 0) " ($unverified could not be verified)" else "") + "."
+                else -> "Skill \"${skill.name}\" finished with problems: $ok of $total steps succeeded, $failed failed."
+            }
+            finish(taskId, goalLabel, "SKILL", summary, ok)
+        } catch (ce: CancellationException) {
+            event("Skill stopped by user", "warn")
+            c.memory.finishTask(taskId, "STOPPED", "Stopped by user.", ok)
+        } catch (t: Throwable) {
+            Logx.e(TAG, "Skill crashed: ${t.message}")
+            c.memory.finishTask(taskId, "FAILED", "Skill error: ${t.message?.take(100)}", ok)
+            commit { it.copy(status = AgentStatus.FAILED, finalResponse = "The skill hit an internal error: ${t.message?.take(120)}") }
+            com.jarvis.mobile.service.AgentForegroundService.stopAll()
+        } finally {
+            ticker.cancel()
+            SkillRecorder.suppress = false
+            SkillStore.markRun(JarvisApp.instance, skill.id)
+        }
+    }
+
+    /** Synthetic specs so skill steps ride the SAME risk ladder as agent actions. */
+    private fun skillSpecFor(step: SkillStep): com.jarvis.mobile.core.tools.ToolSpec = when (step.type) {
+        "TEXT" -> com.jarvis.mobile.core.tools.ToolSpec("type_text", "Replay recorded text entry", risk = com.jarvis.mobile.core.tools.Risk.MEDIUM, needsAccessibility = true)
+        "LONG_PRESS" -> com.jarvis.mobile.core.tools.ToolSpec("long_press", "Replay recorded long-press", risk = com.jarvis.mobile.core.tools.Risk.MEDIUM, needsAccessibility = true)
+        "TAP" -> com.jarvis.mobile.core.tools.ToolSpec("tap", "Replay recorded tap", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true)
+        else -> com.jarvis.mobile.core.tools.ToolSpec("tap", "Replay recorded navigation step", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true)
+    }
+
+    private fun skillArgsFor(step: SkillStep) = kotlinx.serialization.json.buildJsonObject {
+        step.input?.let { put("text", it) }
+        step.text?.let { put("target", it) }
     }
 
     // ------------------------------------------------------------------ loop

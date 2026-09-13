@@ -3,6 +3,42 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [1.7.0] - skill recorder, /grill-me, expert-review hardening
+
+- **Skill recorder.** Tap "Record a skill", use your phone normally, stop - your taps,
+  typing, scrolling and app switches are captured as replayable steps (60-step cap,
+  password fields masked, JARVIS's own actions never recorded). An ongoing notification
+  shows the live step count with a Stop action.
+- **One-tap replay.** Saved skills run deterministically with the full safety net:
+  per-step fresh observation, semantic re-match (resource id → label → description →
+  recorded coordinates as last resort), one retry, fingerprint verification, honest
+  partial/failed outcomes - and the same risk ladder as agent actions (typing confirms
+  first, finance apps always confirm).
+- **/grill-me.** Before a recording becomes a skill, JARVIS interviews you - up to 5
+  targeted, step-by-step questions (which app it assumes, what varies per run, failure
+  behavior, what must never happen without asking) - then writes the full skill draft:
+  name, description, guardrail notes, refined steps. You review/edit/iterate before
+  saving. Works on the local model, API mode, or a deterministic question ladder with
+  zero AI.
+- **Skill editor.** Every step editable: retype the match label, move coordinates,
+  insert WAIT/SCROLL steps, reorder, delete. Nothing persists until you save.
+- **Expert-review hardening** (independent code review vs. 2025 app-agent practice):
+  - Benchmark during a task could run two native generations on one context (SIGSEGV
+    class) - benchmark now holds the same single-flight guard as generate.
+  - Oversized prompts trimmed from the HEAD, deleting the output contract first
+    (the v1.6.0 echo symptom on tiny contexts) - trimming now keeps head + tail and
+    cuts the middle, with a native log line.
+  - Rule engine turned "open chrome and set an alarm" into open_app("chrome and set
+    an alarm") - now anchored + compound-guarded.
+  - Task-slot race (Telegram + voice + routine) is now a CAS - the loser is refused,
+    never silently dropped.
+  - Imported .gguf filenames are sanitized (no path escapes), never overwrite, and a
+    storage precheck prevents truncated junk files.
+  - Remote read timeout (75s) now sits below the engine deadline (90s) so timeouts
+    cancel instead of stacking.
+  - CI now builds the minified release variant on every push - the R8/JNI bug class
+    fails before a release publishes, not after.
+
 ## [1.6.1] - model state honesty + restart resilience
 
 - **Auto-reload after process death.** The last active model is now restored on app start

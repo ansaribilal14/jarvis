@@ -80,7 +80,7 @@ class RemoteOpenAiProvider(
             val conn = URL("$baseUrl$path").openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.connectTimeout = 8000
-            conn.readTimeout = if (chat) 120_000 else 60_000
+            conn.readTimeout = if (chat) 75_000 else 60_000 // 75s < 90s engine deadline: timeout cancels, never stacks
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer ${vault.remoteApiKey}")

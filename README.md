@@ -31,21 +31,21 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
 (~21 MB); model files are downloaded separately inside the app.
 
-## What's new in v1.6.1
+## What's new in v1.7.0
 
-- **Small models finally execute reliably.** Native stop sequences end prompt-echo
-  output in seconds, a salvage parsing pipeline accepts the messy JSON small models
-  actually emit (key aliases, tool-name aliases, truncated-output repair), compact
-  prompts fit sub-1.2B models, and a rule-engine rescue takes over after repeated
-  unparseable rounds instead of burning minutes per retry.
-- **Restart resilience.** The active model is reloaded automatically on app start, and
-  fallback messages state the true model state instead of a hardcoded "no local model
-  downloaded yet".
-- **API mode (v1.5.0).** Slide out the drawer, paste an [NVIDIA NIM](https://build.nvidia.com)
-  key, flip API mode on — tasks run on hosted models instantly, with automatic fallback
-  to local/rules. Local stays the default and LOCAL ONLY still hard-blocks remote.
-- **Faster local inference (v1.5.0).** Threads are auto-tuned to performance cores, and
-  two fast models joined the catalog: SmolLM2-360M (386 MB) and Llama-3.2-1B (807 MB).
+- **Skill recorder.** Tap "Record a skill", use your phone normally, stop - your taps,
+  typing, scrolling and app switches become a replayable skill. Run it any time with
+  one tap: deterministic replay with per-step verification and honest outcomes.
+- **/grill-me.** Before saving, JARVIS interviews you with targeted questions about the
+  recording (assumptions, per-run variation, failure behavior, guardrails) and writes
+  the full skill draft for you to review, edit and iterate before it saves.
+- **Skill editor.** Every step editable before saving - relabel targets, adjust
+  coordinates, insert waits/scrolls, delete steps. Skills live on-device as JSON.
+- **Expert-review hardening.** An independent review produced 8 fixes shipped here:
+  benchmark-during-task SIGSEGV race, head-trim deleting the output contract, the rule
+  engine swallowing compound goals into one giant open_app argument, a task-slot race,
+  unsafe model-import filenames, remote-timeout stacking, and CI now building the
+  minified release variant on every push.
 - Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## What JARVIS can actually do
@@ -60,6 +60,8 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 | Media, nav & system | YouTube search, Google Maps navigation, alarms, timers, media play/pause, screenshots, Do-Not-Disturb |
 | Device controls | brightness (verified), volume, flashlight, Wi-Fi & Bluetooth (panel-assisted on Android 10+ — honest about platform limits) |
 | API mode | Optional NVIDIA NIM hosted models via in-app drawer; fails closed to local/rules |
+| Skill recorder | Record your actions once, replay any time - semantic re-match + coordinate fallback, per-step verification |
+| /grill-me | Built-in requirements interview that turns a recording into a reviewed, editable skill draft |
 | Live progress | Streaming generation state, LIVE MODEL OUTPUT card, ACTIVITY feed, notification progress, Telegram `/status` |
 | Voice | push-to-talk STT (on-device recognizer requested) + local TTS status speech |
 | Memory | local facts, task history, conversation — inspectable, editable, deletable, fully disableable |
