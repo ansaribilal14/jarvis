@@ -29,12 +29,15 @@ object LlamaBridge {
      * One completion. [stopSequences] cut generation early the moment any of
      * them appears in the output (native-side, so tokens/battery are saved);
      * the matched marker itself is trimmed off the returned text.
+     * [grammar]: optional GBNF (null = unconstrained). When set, the native
+     * sampler can only emit tokens that keep the output inside the grammar.
      */
     external fun nativeComplete(
         prompt: String,
         maxTokens: Int,
         listener: ProgressListener?,
         stopSequences: Array<String>,
+        grammar: String?,
     ): ByteArray?
 
     external fun nativeCancel()

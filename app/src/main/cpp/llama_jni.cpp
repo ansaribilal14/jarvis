@@ -139,11 +139,17 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeFree(
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
         JNIEnv *env, jobject /*thiz*/, jstring prompt, jint max_tokens, jobject listener,
-        jobjectArray stop_sequences) {
+        jobjectArray stop_sequences, jstring grammar) {
     if (g_model == nullptr || g_ctx == nullptr) return nullptr;
     const std::string text = jstring_to_std(env, prompt);
     if (text.empty()) return nullptr;
     g_cancel = false;
+
+    // Optional GBNF grammar (v1.8): when set, every sampled token must keep the
+    // output inside the grammar - the planner JSON contract becomes impossible
+    // to violate (no prose, no echoed screen, no hallucinated tool names).
+    std::string grammar_str;
+    if (grammar != nullptr) grammar_str = jstring_to_std(env, grammar);
 
     // Stop sequences (Kotlin agent layer supplies them; e.g. "</screen>" so a
     // small model that starts echoing the prompt is cut off at the boundary
@@ -242,6 +248,18 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
     report(0, 0, n_prompt, 0, "");
 
     auto *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    // Grammar first: it masks logits before top_p/temp/dist sample from them.
+    // init_grammar never aborts on a bad grammar (it degrades to pass-through),
+    // but keep a null guard anyway.
+    if (!grammar_str.empty()) {
+        auto *gs = llama_sampler_init_grammar(g_model, grammar_str.c_str(), "root");
+        if (gs != nullptr) {
+            llama_sampler_chain_add(smpl, gs);
+            LOGI("grammar constraint active (%zu bytes)", grammar_str.size());
+        } else {
+            LOGW("grammar sampler init failed - continuing unconstrained");
+        }
+    }
     llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.92f, 1));
     llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.25f));
     llama_sampler_chain_add(smpl, llama_sampler_init_dist(1312));

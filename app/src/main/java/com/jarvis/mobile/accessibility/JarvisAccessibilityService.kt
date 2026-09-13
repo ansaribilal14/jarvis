@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /**
@@ -259,34 +260,66 @@ class JarvisAccessibilityService : AccessibilityService() {
         return GestureDescription.Builder().addStroke(stroke).build()
     }
 
-    fun tapAt(x: Int, y: Int): Boolean {
+    /**
+     * Dispatch a gesture and AWAIT its real completion via the service callback
+     * (v1.8: expert-review deferred item - previously we only knew the gesture
+     * was ACCEPTED, then guessed with fixed delays). Returns true only when the
+     * accessibility service actually finished the stroke; a dropped callback
+     * hits the timeout and reports false so callers can verify instead of
+     * assuming success.
+     */
+    private suspend fun awaitGesture(g: GestureDescription, timeoutMs: Long = 4_000): Boolean {
+        val done = withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { cont ->
+                val dispatched = runCatching {
+                    dispatchGesture(
+                        g,
+                        object : GestureResultCallback() {
+                            override fun onCompleted(gesture: GestureDescription?) {
+                                if (cont.isActive) cont.resume(true)
+                            }
+
+                            override fun onCancelled(gesture: GestureDescription?) {
+                                if (cont.isActive) cont.resume(false)
+                            }
+                        },
+                        null,
+                    )
+                }.getOrDefault(false)
+                if (!dispatched && cont.isActive) cont.resume(false)
+            }
+        }
+        return done ?: false
+    }
+
+    suspend fun tapAt(x: Int, y: Int): Boolean {
         val d = gesturePath(x.toFloat(), y.toFloat(), x.toFloat(), y.toFloat(), 40)
-        return runCatching { dispatchGesture(d, null, null) }.getOrDefault(false)
+        return awaitGesture(d)
     }
 
     /**
      * Double-tap at coordinates in ONE dispatched gesture (two strokes) - used to
      * like posts/videos in apps where double-tap is the like gesture.
      */
-    fun doubleTapAt(x: Int, y: Int): Boolean {
+    suspend fun doubleTapAt(x: Int, y: Int): Boolean {
         val path = android.graphics.Path().apply { moveTo(x.toFloat(), y.toFloat()) }
         val first = GestureDescription.StrokeDescription(path, 0, 60)
         val second = GestureDescription.StrokeDescription(path, 170, 60)
         val gesture = GestureDescription.Builder().addStroke(first).addStroke(second).build()
-        return runCatching { dispatchGesture(gesture, null, null) }.getOrDefault(false)
+        return awaitGesture(gesture)
     }
 
-    fun longPressAt(x: Int, y: Int): Boolean {
+    suspend fun longPressAt(x: Int, y: Int): Boolean {
         val d = gesturePath(x.toFloat(), y.toFloat(), x.toFloat(), y.toFloat(), 620)
-        return runCatching { dispatchGesture(d, null, null) }.getOrDefault(false)
+        return awaitGesture(d)
     }
 
-    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 320): Boolean {
+    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 320): Boolean {
         val d = gesturePath(x1.toFloat(), y1.toFloat(), x2.toFloat(), y2.toFloat(), durationMs)
-        return runCatching { dispatchGesture(d, null, null) }.getOrDefault(false)
+        return awaitGesture(d)
     }
 
-    fun scrollScreen(forward: Boolean): Boolean {
+    suspend fun scrollScreen(forward: Boolean): Boolean {
         val root = runCatching { rootInActiveWindow }.getOrNull()
         if (root != null) {
             val q = ArrayDeque<AccessibilityNodeInfo>()

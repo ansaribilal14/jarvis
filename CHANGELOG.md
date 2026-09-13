@@ -3,6 +3,28 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [1.8.0] - grammar-constrained decoding, gesture completion, state machine
+
+- **GBNF grammar-constrained decoding (local route).** The planner's decide stage and the
+  plan-first stage now generate a GBNF grammar from the live tool registry and hand it to the
+  llama.cpp sampler (`llama_sampler_init_grammar`, added first in the chain). The model can only
+  emit tokens that keep the output inside the JSON contract: valid JSON, tool names restricted to
+  registered tools, arg keys pulled toward real spec params (a generic key stays allowed so nothing
+  dead-ends), final-response form included. Prose, markdown fences, echoed screen blocks and
+  hallucinated tools become syntactically impossible - the v1.6.0 small-model failure class is
+  closed at the sampler level, with the salvage pipeline kept as the second net. Remote/API mode is
+  unaffected (the grammar is a native-runtime feature).
+- **Gesture-completion callbacks.** `tapAt` / `doubleTapAt` / `longPressAt` / `swipe` / `scrollScreen`
+  now suspend until the accessibility service reports the gesture actually completed
+  (`GestureResultCallback`, 4s timeout guard), instead of returning "dispatch accepted" and guessing
+  with fixed delays. Skill replay and agent verification now measure real strokes.
+- **Agent runtime state machine.** New `AgentStateMachine` defines the legal status transitions;
+  every engine status commit is validated (fail-open: unexpected transitions log loudly and still
+  apply, so a live task can never wedge on a matrix edge case).
+- **Grounding-core test coverage.** New JVM suites: UiResolve (resolution priority ladder),
+  RiskClassifier (escalation + confirmation policy), AgentStateMachine (matrix invariants),
+  DecisionGrammar (rule completeness, contract shapes, balanced syntax, size sanity).
+
 ## [1.7.0] - skill recorder, /grill-me, expert-review hardening
 
 - **Skill recorder.** Tap "Record a skill", use your phone normally, stop - your taps,

@@ -43,7 +43,7 @@ class RemoteOpenAiProvider(
         generate("Reply with exactly: OK", 8).mapCatching { it.ifBlank { "empty reply" } }
     }
 
-    override suspend fun generate(prompt: String, maxTokens: Int, stopSequences: List<String>): Result<String> = withContext(Dispatchers.IO) {
+    override suspend fun generate(prompt: String, maxTokens: Int, stopSequences: List<String>, grammar: String?): Result<String> = withContext(Dispatchers.IO) {
         if (settings.localOnly.first()) {
             return@withContext Result.failure(IllegalStateException("LOCAL ONLY mode is enabled - remote inference blocked"))
         }

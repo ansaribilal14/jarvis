@@ -89,9 +89,18 @@ object AgentEngine {
     val state: StateFlow<AgentUiState> = _state
     private val stateLock = Any()
 
-    /** Single serialized state writer - prevents ticker/loop/event lost-update races. */
+    /** Single serialized state writer - prevents ticker/loop/event lost-update races.
+     *  Status changes pass the [AgentStateMachine] matrix; unexpected transitions
+     *  are logged loudly but still applied (fail-open: never wedge a live task). */
     private fun commit(f: (AgentUiState) -> AgentUiState) {
-        synchronized(stateLock) { _state.value = f(_state.value) }
+        synchronized(stateLock) {
+            val prev = _state.value
+            val next = f(prev)
+            if (next.status != prev.status && !AgentStateMachine.isLegal(prev.status, next.status)) {
+                Logx.w(TAG, "state-machine: ${prev.status} -> ${next.status} (unexpected; allowing)")
+            }
+            _state.value = next
+        }
     }
 
     private val _confirmations = MutableSharedFlow<ConfirmationRequest>(extraBufferCapacity = 4)
@@ -322,7 +331,7 @@ object AgentEngine {
         val steps = mutableListOf<StepUi>()
 
         fun update(f: (AgentUiState) -> AgentUiState) {
-            synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList()) }
+            commit { f(it).copy(steps = steps.toList()) }
         }
 
         val ticker = launch {
@@ -485,7 +494,7 @@ object AgentEngine {
         var afterNote: String? = null
 
         fun update(f: (AgentUiState) -> AgentUiState) {
-            synchronized(stateLock) { _state.value = f(_state.value).copy(steps = steps.toList()) }
+            commit { f(it).copy(steps = steps.toList()) }
         }
 
         // 1 Hz heartbeat: elapsed clock + live generation stats folded into the UI,
@@ -546,8 +555,16 @@ object AgentEngine {
                         Planner.planSystemPrompt(InjectionGuard.inspect(null), factsBlock(), compactPlan),
                         Planner.planUserPrompt(goal),
                     )
-                    val steps = llmGenerate(prompt, maxTokens = if (compactPlan) 260 else 500, stops = PLAN_STOPS)
-                        ?.let { Planner.parsePlan(it) } ?: emptyList()
+                    val steps = llmGenerate(
+                        prompt,
+                        maxTokens = if (compactPlan) 260 else 500,
+                        stops = PLAN_STOPS,
+                        grammar = if (routeNow.route == ModelRouter.Route.LOCAL) {
+                            runCatching {
+                                com.jarvis.mobile.core.planner.DecisionGrammar.planGrammar(ToolRegistry.available().map { it.spec })
+                            }.getOrNull()
+                        } else null,
+                    )?.let { Planner.parsePlan(it) } ?: emptyList()
                     if (steps.size >= 2) {
                         planSteps = ArrayDeque(steps)
                         planTotal = steps.size
@@ -827,7 +844,7 @@ object AgentEngine {
                 val maxTokens = if (compact) 130 else 300
                 val genRef = java.util.concurrent.atomic.AtomicReference<Pair<Result<String>, ModelRouter.Decision>?>(null)
                 val genJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-                    genRef.set(runCatching { router.generate(prompt, maxTokens, DECIDE_STOPS) }.fold(
+                    genRef.set(runCatching { router.generate(prompt, maxTokens, DECIDE_STOPS, decideGrammar()) }.fold(
                         onSuccess = { it },
                         onFailure = { Result.failure<String>(it) to ModelRouter.Decision(route.route, "error: ${it.message}") },
                     ))
@@ -891,18 +908,34 @@ object AgentEngine {
         runCatching { com.jarvis.mobile.util.JsonX.firstJsonObject(raw)?.containsKey("response") }.getOrDefault(false) == true
 
     /**
+     * Grammar-constrained decoding for the LOCAL decide stage (v1.8): the GBNF
+     * makes the OUTPUT CONTRACT unbreakable (valid JSON, real tool names, no
+     * prose/echo). Built from the live registry so newly available tools are
+     * always included; null (unconstrained) on any surprise - the salvage
+     * pipeline stays as the second net.
+     */
+    private fun decideGrammar(): String? = runCatching {
+        com.jarvis.mobile.core.planner.DecisionGrammar.decisionGrammar(ToolRegistry.available().map { it.spec })
+    }.onFailure { Logx.w(TAG, "Grammar build failed (${it.message})") }.getOrNull()
+
+    /**
      * LLM generation with the hard deadline (240s local / 90s remote).
      * Returns null on timeout/absence so callers can degrade gracefully
      * instead of hanging - used by the plan-first stage and kept separate
      * from [decide]'s inline flow.
      */
-    private suspend fun llmGenerate(prompt: String, maxTokens: Int, stops: List<String> = emptyList()): String? {
+    private suspend fun llmGenerate(
+        prompt: String,
+        maxTokens: Int,
+        stops: List<String> = emptyList(),
+        grammar: String? = null,
+    ): String? {
         val route = router.decide()
         if (route.route == ModelRouter.Route.RULES) return null
         val timeoutMs = if (route.route == ModelRouter.Route.LOCAL) 240_000L else 90_000L
         val genRef = java.util.concurrent.atomic.AtomicReference<Result<String>?>(null)
         val genJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-            genRef.set(runCatching { router.generate(prompt, maxTokens, stops).first }.fold(
+            genRef.set(runCatching { router.generate(prompt, maxTokens, stops, grammar).first }.fold(
                 onSuccess = { it },
                 onFailure = { Result.failure<String>(it) },
             ))

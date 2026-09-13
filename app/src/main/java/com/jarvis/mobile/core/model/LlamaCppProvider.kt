@@ -82,7 +82,12 @@ class LlamaCppProvider(
 
     override fun isReady(): Boolean = LlamaBridge.nativeIsLoaded()
 
-    override suspend fun generate(prompt: String, maxTokens: Int, stopSequences: List<String>): Result<String> = withContext(Dispatchers.Default) {
+    override suspend fun generate(
+        prompt: String,
+        maxTokens: Int,
+        stopSequences: List<String>,
+        grammar: String? = null,
+    ): Result<String> = withContext(Dispatchers.Default) {
         if (!isReady()) return@withContext Result.failure(IllegalStateException("No local model loaded"))
         if (!generating.compareAndSet(false, true)) {
             return@withContext Result.failure(IllegalStateException("Inference already in progress"))
@@ -103,7 +108,7 @@ class LlamaCppProvider(
             )
         }
         try {
-            val bytes = LlamaBridge.nativeComplete(prompt, maxTokens, listener, stopSequences.toTypedArray())
+            val bytes = LlamaBridge.nativeComplete(prompt, maxTokens, listener, stopSequences.toTypedArray(), grammar)
             if (bytes == null) Result.failure(IllegalStateException("Generation returned nothing (model error or cancelled)"))
             else Result.success(String(bytes, Charsets.UTF_8))
         } catch (t: Throwable) {
@@ -154,7 +159,7 @@ class LlamaCppProvider(
         try {
             val prompt = "USER TASK: open chrome and search for local ai. Respond with one JSON action only."
             val start = System.currentTimeMillis()
-            val res = LlamaBridge.nativeComplete(prompt, 64, null, emptyArray())
+            val res = LlamaBridge.nativeComplete(prompt, 64, null, emptyArray(), null)
             val ms = System.currentTimeMillis() - start
             if (res == null) Result.failure(IllegalStateException("Benchmark generation failed"))
             else Result.success(64_000.0 / ms.coerceAtLeast(1))

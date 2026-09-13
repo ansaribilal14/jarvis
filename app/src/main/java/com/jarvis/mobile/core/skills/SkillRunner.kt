@@ -88,7 +88,11 @@ object SkillRunner {
         }
     }
 
-    private suspend fun before(svc: JarvisAccessibilityService, obs: ScreenObservation?, block: () -> Boolean): Boolean {
+    private suspend fun before(
+        svc: JarvisAccessibilityService,
+        obs: ScreenObservation?,
+        block: suspend () -> Boolean,
+    ): Boolean {
         if (!block()) return false
         kotlinx.coroutines.delay(420) // let the UI settle before the change check
         val after = runCatching { svc.observe(maxElements = 30) }.getOrNull() ?: return false

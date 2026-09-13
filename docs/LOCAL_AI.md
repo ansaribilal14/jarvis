@@ -20,6 +20,14 @@ wasted round used to cost 2–4 minutes on a small model); the marker is trimmed
 returned text. Wired through `LlmProvider.generate(..., stopSequences)` into both
 providers (OpenAI `stop` param on the remote path).
 
+## Grammar-constrained decoding (native)
+`nativeComplete` accepts an optional GBNF grammar string. When set, the sampler chain starts with
+`llama_sampler_init_grammar` so every sampled token must keep the output inside the grammar - the
+planner JSON contract becomes unbreakable (see docs/AGENT_ENGINE.md). A grammar that fails to
+compile degrades to pass-through (no crash, unconstrained output). Kotlin side:
+`DecisionGrammar` builds the grammar from the live tool registry per decide/plan call; the remote
+provider ignores the parameter entirely.
+
 ## Progress callback (optional by design)
 The JNI layer reports prompt-eval progress per 64-token chunk and throttled decode
 progress (token count + partial UTF-8 bytes) to an optional listener. `GetMethodID` is

@@ -31,6 +31,22 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
 (~21 MB); model files are downloaded separately inside the app.
 
+## What's new in v1.8.0
+
+- **Grammar-constrained decoding.** On the local route, the planner's JSON output contract is now
+  enforced by the llama.cpp sampler itself (GBNF): the model can only emit tokens that keep the
+  output inside the contract - valid JSON, real tool names, no prose, no echoed screen. The whole
+  v1.6.0 small-model failure class (echo, markdown fences, invented tools) becomes syntactically
+  impossible; the salvage pipeline stays as a second net.
+- **Gesture-completion callbacks.** Tap/double-tap/long-press/swipe now await the accessibility
+  service's real completion callback (with a timeout) instead of fire-and-forget plus fixed delays -
+  replays and agent actions verify actual strokes, not assumptions.
+- **Agent runtime state machine.** Every status change passes an explicit transition matrix;
+  unexpected transitions log loudly (fail-open) so UI-state bugs surface instead of hiding.
+- **Test coverage for the grounding core.** New JVM suites for UiResolve, RiskClassifier, the state
+  machine and the grammar generator.
+- Full history: [CHANGELOG.md](CHANGELOG.md).
+
 ## What's new in v1.7.0
 
 - **Skill recorder.** Tap "Record a skill", use your phone normally, stop - your taps,

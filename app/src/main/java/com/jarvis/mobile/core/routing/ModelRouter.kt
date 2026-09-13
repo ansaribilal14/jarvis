@@ -42,10 +42,18 @@ class ModelRouter(
         }
     }
 
-    suspend fun generate(prompt: String, maxTokens: Int, stopSequences: List<String> = emptyList()): Pair<Result<String>, Decision> {
+    suspend fun generate(
+        prompt: String,
+        maxTokens: Int,
+        stopSequences: List<String> = emptyList(),
+        grammar: String? = null,
+    ): Pair<Result<String>, Decision> {
         val d = decide()
         return when (d.route) {
-            Route.LOCAL -> llama.generate(prompt, maxTokens, stopSequences) to d
+            // Grammar-constrained decoding is a local-runtime feature: the native
+            // sampler owns it. Remote providers ignore it (API mode has its own
+            // JSON-mode controls we do not manage here).
+            Route.LOCAL -> llama.generate(prompt, maxTokens, stopSequences, grammar) to d
             Route.REMOTE -> remote.generate(prompt, maxTokens, stopSequences) to d
             Route.RULES -> Result.failure<String>(IllegalStateException("no LLM route available")) to d
         }
