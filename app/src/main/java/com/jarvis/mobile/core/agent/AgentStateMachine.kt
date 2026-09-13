@@ -15,7 +15,7 @@ object AgentStateMachine {
 
     val legalNext: Map<AgentStatus, Set<AgentStatus>> = mapOf(
         AgentStatus.IDLE to setOf(
-            AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
+            AgentStatus.IDLE, AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.STOPPED,
         ),
         AgentStatus.THINKING to setOf(
             AgentStatus.THINKING, AgentStatus.ACTING, AgentStatus.VERIFYING,

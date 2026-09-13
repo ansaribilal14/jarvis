@@ -96,7 +96,9 @@ class DecisionGrammarTest {
     @Test
     fun `plan grammar exposes steps array with tool-args-why`() {
         val g = DecisionGrammar.planGrammar(specs)!!
-        listOf("\"steps\"", "step ::=", "\"tool\"", "\"args\"", "\"why\"").forEach {
+        // Inner quotes are GBNF-escaped in the output (\"steps\"), so assert on
+        // rule definitions and unambiguous fragments instead of quoted literals.
+        listOf("steps ::=", "step ::=", "toolname ::=", "argsobj ::=", "why").forEach {
             assertTrue("plan grammar missing $it", g.contains(it))
         }
     }
