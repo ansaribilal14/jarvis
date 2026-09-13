@@ -92,7 +92,7 @@ object SkillStore {
 
     fun save(ctx: Context, skill: SkillDefinition) {
         runCatching {
-            File(dir(ctx), "${skill.id}.json").writeText(json.encodeToString(skill))
+            File(dir(ctx), "${skill.id}.json").writeText(json.encodeToString(SkillDefinition.serializer(), skill))
             Logx.i(TAG, "Saved skill \"${skill.name}\" (${skill.steps.size} steps, ${skill.source})")
         }.onFailure { Logx.e(TAG, "Skill save failed: ${it.message}") }
     }
