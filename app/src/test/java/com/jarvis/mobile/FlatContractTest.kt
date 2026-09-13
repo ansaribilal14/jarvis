@@ -193,10 +193,10 @@ class FlatContractTest {
     @Test
     fun `moved stroke is a scroll with dominant direction`() {
         val down = SkillRecorder.TouchStroke(24f)
-        down.begin(1000L, 500f to 800f, 1)
-        down.move(1050L, 500f to 650f, 1)
-        down.move(1100L, 500f to 450f, 1)
-        val r = down.end(1150L, 500f to 400f)
+        down.begin(1000L, 500f, 800f, 1)
+        down.move(1050L, 500f, 650f, 1)
+        down.move(1100L, 500f, 450f, 1)
+        val r = down.end(1150L, 500f, 400f)
         assertEquals("SCROLL", r!!.type)
         // dy negative (finger moved up the screen) -> direction "up"
         assertTrue(r.a == 0f && r.b < 0f)
@@ -205,9 +205,9 @@ class FlatContractTest {
     @Test
     fun `multi-pointer stroke is ignored`() {
         val s = SkillRecorder.TouchStroke(24f)
-        s.begin(1000L, 500f to 300f, 1)
-        s.move(1050L, 500f to 300f, 2) // second finger lands
-        val r = s.end(1100L, 500f to 300f)
+        s.begin(1000L, 500f, 300f, 1)
+        s.move(1050L, 500f, 300f, 2) // second finger lands
+        val r = s.end(1100L, 500f, 300f)
         assertNull(r)
     }
 
