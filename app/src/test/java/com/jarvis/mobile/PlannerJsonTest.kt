@@ -24,8 +24,21 @@ class PlannerJsonTest {
         listOf(ParamSpec("text", "string", true, "text")),
         com.jarvis.mobile.core.tools.Risk.MEDIUM,
     )
+    private val openUrlSpec = ToolSpec(
+        "open_url", "test",
+        listOf(ParamSpec("url", "string", true, "url")),
+        com.jarvis.mobile.core.tools.Risk.LOW,
+    )
+    private val ytSpec = ToolSpec(
+        "youtube_search", "test",
+        listOf(ParamSpec("query", "string", true, "query")),
+        com.jarvis.mobile.core.tools.Risk.LOW,
+    )
 
-    private val specs = mapOf("open_app" to openAppSpec, "tap" to tapSpec, "type_text" to typeSpec)
+    private val specs = mapOf(
+        "open_app" to openAppSpec, "tap" to tapSpec, "type_text" to typeSpec,
+        "open_url" to openUrlSpec, "youtube_search" to ytSpec,
+    )
     private fun parse(text: String) = Planner.parseDecision(text) { specs[it] }
 
     @Test
@@ -88,5 +101,82 @@ class PlannerJsonTest {
         val d = parse(text)
         assertNotNull(d.action)
         assertEquals("hello {world}", JsonX.run { d.action!!.args.str("text") })
+    }
+
+    // ---------------------------------------------------- v1.6 small-model salvage
+
+    @Test
+    fun `nextAction flat alias with arguments key parses`() {
+        val text = """{"thought":"opening","nextAction":"open_url","arguments":{"url":"https://example.com"}}"""
+        val d = parse(text)
+        assertNotNull(d.action)
+        assertEquals("open_url", d.action!!.tool)
+        assertEquals("https://example.com", JsonX.run { d.action!!.args.str("url") })
+    }
+
+    @Test
+    fun `action buried in echoed prompt garbage still parses`() {
+        // Real-world shape from a 0.5B model: JSON followed by echoed screen block.
+        val text = """
+            {"thought":"open it","nextAction":"open_url","arguments":{"url":"https://github.com/x"}}></screen>
+            APP: com.google.android.apps.playground
+            SCREEN: FrameLayout
+            [1] role=other @(226,1995)
+            [2] role=other @(383,1995)
+        """.trimIndent()
+        val d = parse(text)
+        assertNotNull(d.action)
+        assertEquals("open_url", d.action!!.tool)
+    }
+
+    @Test
+    fun `truncated json is repaired into a valid action`() {
+        val text = """{"thought":"open","action":{"tool":"open_app","args":{"app":"Chro"""
+        val d = parse(text)
+        assertNotNull(d.action)
+        assertEquals("open_app", d.action!!.tool)
+        assertEquals("Chro", JsonX.run { d.action!!.args.str("app") })
+    }
+
+    @Test
+    fun `near-miss tool name maps to registry tool`() {
+        val text = """{"action":{"tool":"click","args":{"text":"Send"}}}"""
+        val d = parse(text)
+        assertNotNull(d.action)
+        assertEquals("tap", d.action!!.tool)
+    }
+
+    @Test
+    fun `string args bound to single required param`() {
+        val text = """{"tool":"open_url","args":"example.com"}"""
+        val d = parse(text)
+        assertNotNull(d.action)
+        assertEquals("open_url", d.action!!.tool)
+        assertEquals("example.com", JsonX.run { d.action!!.args.str("url") })
+    }
+
+    @Test
+    fun `second candidate wins when first is unusable`() {
+        val text = """{"a":1} then {"tool":"tap","args":{}}"""
+        val d = parse(text)
+        assertNotNull(d.action)
+        assertEquals("tap", d.action!!.tool)
+    }
+
+    @Test
+    fun `bare thought only output stays retryable not final`() {
+        val d = parse("""{"thought":"I should open something"}""")
+        assertNull(d.action)
+        // treated as prose final-response fallback by parseDecision; engine's
+        // hasResponseKey() gate keeps it retryable - just assert no action.
+    }
+
+    @Test
+    fun `plan steps parse with alias tool names`() {
+        val text = """{"steps":[{"tool":"open_app","args":{"app":"YouTube"}},{"tool":"yt_search","args":{"query":"lofi"}}]}"""
+        val steps = Planner.parsePlan(text) { specs[it] }
+        assertEquals(2, steps.size)
+        assertEquals("open_app", steps[0].tool)
+        assertEquals("youtube_search", steps[1].tool)
     }
 }

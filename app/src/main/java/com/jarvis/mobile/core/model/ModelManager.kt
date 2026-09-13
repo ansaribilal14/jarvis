@@ -102,6 +102,23 @@ class ModelManager(
 
     fun activeId(): String? = _loadState.value.loadedModelId ?: llama.activeModel?.id
 
+    /**
+     * True when the active local model is too small to reliably follow the full
+     * planner contract (sub-~1.2B params). Triggers COMPACT MODE: short system
+     * prompt, trimmed screen block, stop sequences, tighter output cap - so tiny
+     * models answer with one JSON action instead of echoing the prompt.
+     */
+    fun isCompactPromptActive(): Boolean {
+        val m = llama.activeModel ?: return false
+        if (m.params.isNotBlank() && m.params != "?") {
+            val b = Regex("([0-9]+(?:\\.[0-9]+)?)").find(m.params)?.groupValues?.get(1)?.toFloatOrNull()
+            if (b != null) return b <= 1.2f
+        }
+        // Imported models report params="?" - estimate from file size
+        // (a sub-1.2B model at Q4-Q8 is always under ~900 MB).
+        return m.sizeBytes in 1 until 900L * 1024 * 1024
+    }
+
     fun isModelActive(m: ModelCatalog.CatalogModel): Boolean =
         _loadState.value.loadedModelId == m.id || llama.activeModel?.fileName == m.fileName
 

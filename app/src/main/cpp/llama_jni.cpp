@@ -138,11 +138,28 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeFree(
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
-        JNIEnv *env, jobject /*thiz*/, jstring prompt, jint max_tokens, jobject listener) {
+        JNIEnv *env, jobject /*thiz*/, jstring prompt, jint max_tokens, jobject listener,
+        jobjectArray stop_sequences) {
     if (g_model == nullptr || g_ctx == nullptr) return nullptr;
     const std::string text = jstring_to_std(env, prompt);
     if (text.empty()) return nullptr;
     g_cancel = false;
+
+    // Stop sequences (Kotlin agent layer supplies them; e.g. "</screen>" so a
+    // small model that starts echoing the prompt is cut off at the boundary
+    // instead of burning its whole token budget - and minutes of battery).
+    std::vector<std::string> stops;
+    if (stop_sequences != nullptr) {
+        const jsize n_stops = env->GetArrayLength(stop_sequences);
+        for (jsize si = 0; si < n_stops && si < 24; si++) {
+            jstring s = static_cast<jstring>(env->GetObjectArrayElement(stop_sequences, si));
+            std::string v = jstring_to_std(env, s);
+            if (s != nullptr) env->DeleteLocalRef(s);
+            if (!v.empty()) stops.push_back(std::move(v));
+        }
+    }
+    size_t max_stop_len = 0;
+    for (const auto &s : stops) max_stop_len = std::max(max_stop_len, s.size());
 
     // Optional progress listener (same-thread callback; Kotlin side keeps it alive
     // for the duration of this call). Signature: onProgress(IIII[B)V where
@@ -256,6 +273,24 @@ Java_com_jarvis_mobile_core_model_LlamaBridge_nativeComplete(
             const int n = llama_token_to_piece(g_model, sampled, buf, sizeof(buf), 0, true);
             if (n < 0) break;
             out.append(buf, std::min(n, static_cast<int>(sizeof(buf))));
+
+            // Stop-sequence check after every token: a match may span token
+            // boundaries, so we re-scan only a small tail window (any match that
+            // started earlier would have completed on a previous iteration).
+            if (max_stop_len > 0) {
+                const size_t window = max_stop_len + 8;
+                const size_t from = out.size() > window ? out.size() - window : 0;
+                size_t cut = std::string::npos;
+                for (const auto &s : stops) {
+                    const size_t p = out.find(s, from);
+                    if (p != std::string::npos && (cut == std::string::npos || p < cut)) cut = p;
+                }
+                if (cut != std::string::npos) {
+                    out.resize(cut); // truncate the stop marker itself off the result
+                    if (on_progress != nullptr) report(1, n_prompt, n_prompt, i + 1, out);
+                    break;
+                }
+            }
 
             llama_token next = sampled; // batch API takes a mutable token pointer
             if (llama_decode(g_ctx, llama_batch_get_one(&next, 1)) != 0) break;

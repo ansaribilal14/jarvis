@@ -95,6 +95,26 @@ object AgentEngine {
     @Volatile private var stopped = false
     @Volatile private var diverged = false
     @Volatile private var slowWarned = false
+    @Volatile private var compactAnnounced = false
+
+    /**
+     * Stop sequences for the DECIDE stage. They mirror the prompt's own section
+     * markers: a small model that "continues the document" (echoing the screen
+     * block, starting a new TASK:…) is cut off at the boundary natively instead
+     * of burning its whole token budget - and 2+ minutes of decode time.
+     */
+    private val DECIDE_STOPS = listOf(
+        "</screen>", "<screen>",
+        "\nTASK:", "\nROUTE:", "\nPROGRESS:", "\nACTIVE PLAN:", "\nPLAN STEP:",
+        "\nSTATE AFTER", "\nPREVIOUS ACTIONS", "\nLAST RESULTS",
+        "\nAPP:", "\nSCREEN:", "\nANSWER WITH", "\nDecide the",
+        "Observation:", "\n[", "\nUser:", "\nuser:", "\n⚠",
+    )
+
+    /** Stop sequences for the one-shot PLAN stage (plan JSON may pretty-print arrays). */
+    private val PLAN_STOPS = listOf(
+        "</screen>", "<screen>", "\nGOAL:", "\nTASK:", "\nUser:", "\nuser:", "Observation:",
+    )
 
     /** Live activity feed for the running task (member-level so all phases can log). */
     private val taskEvents = mutableListOf<AgentEvent>()
@@ -168,6 +188,7 @@ object AgentEngine {
         stopped = false
         diverged = false
         slowWarned = false
+        compactAnnounced = false
         job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             execute(goal, source)
         }
@@ -324,14 +345,16 @@ object AgentEngine {
             runCatching {
                 val routeNow = router.decide()
                 if (routeNow.route != ModelRouter.Route.RULES && source != "ROUTINE" && Planner.isCompoundGoal(goal)) {
+                    val compactPlan = routeNow.route == ModelRouter.Route.LOCAL && c.modelManager.isCompactPromptActive()
                     event("Compound goal - drafting a plan first…")
                     val prompt = com.jarvis.mobile.core.model.PromptTemplates.render(
                         c.modelManager.llama.activeModel?.template
                             ?: com.jarvis.mobile.core.model.ModelCatalog.ChatTemplate.CHATML,
-                        Planner.planSystemPrompt(InjectionGuard.inspect(null), factsBlock()),
+                        Planner.planSystemPrompt(InjectionGuard.inspect(null), factsBlock(), compactPlan),
                         Planner.planUserPrompt(goal),
                     )
-                    val steps = llmGenerate(prompt, maxTokens = 500)?.let { Planner.parsePlan(it) } ?: emptyList()
+                    val steps = llmGenerate(prompt, maxTokens = if (compactPlan) 260 else 500, stops = PLAN_STOPS)
+                        ?.let { Planner.parsePlan(it) } ?: emptyList()
                     if (steps.size >= 2) {
                         planSteps = ArrayDeque(steps)
                         planTotal = steps.size
@@ -375,7 +398,21 @@ object AgentEngine {
                     val cur = planSteps.first()
                     "step ${planTotal - planSteps.size + 1} of $planTotal: ${cur.tool}(${cur.args.toString().take(120)})"
                 } else null
-                val decision = decide(goal, screen, history, suspicion, actionsUsed, budgetLabel, stepWarnings, afterNote, planNote)
+                var decision = decide(goal, screen, history, suspicion, actionsUsed, budgetLabel, stepWarnings, afterNote, planNote)
+
+                // Small-model rescue: two consecutive unparseable outputs on the
+                // LOCAL route usually mean the tiny model cannot express an action
+                // here at all. Instead of a 3rd multi-minute LLM round, let the
+                // deterministic rule engine take THIS step (honest + instant).
+                if (decision.action == null && decision.response == null && interpFails >= 1 &&
+                    decision.routeName == ModelRouter.Route.LOCAL.name
+                ) {
+                    val d = DeterministicPlanner.decide(goal, screen)
+                    if (d.action != null || d.response != null) {
+                        event("Model output invalid twice - using built-in automation logic for this step", "warn")
+                        decision = RoutedDecision(d.action, d.response, ModelRouter.Route.RULES.name)
+                    }
+                }
                 update { it.copy(route = decision.routeName) }
 
                 // Unparseable model output: retry instead of dying (small local models do this).
@@ -560,13 +597,21 @@ object AgentEngine {
         val route = router.decide()
         updateRoute(route.route.name)
         event("Route: ${route.route.name.lowercase()} (${route.reason.take(70)})")
+        // COMPACT MODE for sub-1.2B local models: tiny models drown in the full
+        // planner contract (screenshots showed 1740-token prompts echoed back).
+        // Short prompt + short screen + hard output cap = one clean JSON action.
+        val compact = route.route == ModelRouter.Route.LOCAL && c.modelManager.isCompactPromptActive()
+        if (compact && !compactAnnounced) {
+            compactAnnounced = true
+            event("Fast compact mode for small model - simplified reasoning, echo protection on", "ok")
+        }
         return when (route.route) {
             ModelRouter.Route.RULES -> {
                 val d = DeterministicPlanner.decide(goal, screen)
                 RoutedDecision(d.action, d.response, route.route.name)
             }
             else -> {
-                val system = Planner.systemPrompt(suspicion, factsBlock())
+                val system = Planner.systemPrompt(suspicion, factsBlock(), compact)
                 val user = Planner.userPrompt(
                     goal, screen, history, route.reason,
                     actionsUsed = actionsUsed,
@@ -574,6 +619,7 @@ object AgentEngine {
                     warnings = extraWarnings,
                     afterNote = afterNote,
                     planNote = planNote,
+                    compact = compact,
                 )
                 val template = c.modelManager.llama.activeModel?.template
                     ?: com.jarvis.mobile.core.model.ModelCatalog.ChatTemplate.CHATML
@@ -583,9 +629,12 @@ object AgentEngine {
                 // budget than remote; on timeout we cancel inference and fall back
                 // to the deterministic planner so the task still makes progress.
                 val timeoutMs = if (route.route == ModelRouter.Route.LOCAL) 240_000L else 90_000L
+                // Compact mode needs far fewer tokens for one JSON line; the cap
+                // alone can end a runaway generation 3x sooner even without a stop hit.
+                val maxTokens = if (compact) 130 else 300
                 val genRef = java.util.concurrent.atomic.AtomicReference<Pair<Result<String>, ModelRouter.Decision>?>(null)
                 val genJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-                    genRef.set(runCatching { router.generate(prompt, maxTokens = 300) }.fold(
+                    genRef.set(runCatching { router.generate(prompt, maxTokens, DECIDE_STOPS) }.fold(
                         onSuccess = { it },
                         onFailure = { Result.failure<String>(it) to ModelRouter.Decision(route.route, "error: ${it.message}") },
                     ))
@@ -648,13 +697,13 @@ object AgentEngine {
      * instead of hanging - used by the plan-first stage and kept separate
      * from [decide]'s inline flow.
      */
-    private suspend fun llmGenerate(prompt: String, maxTokens: Int): String? {
+    private suspend fun llmGenerate(prompt: String, maxTokens: Int, stops: List<String> = emptyList()): String? {
         val route = router.decide()
         if (route.route == ModelRouter.Route.RULES) return null
         val timeoutMs = if (route.route == ModelRouter.Route.LOCAL) 240_000L else 90_000L
         val genRef = java.util.concurrent.atomic.AtomicReference<Result<String>?>(null)
         val genJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
-            genRef.set(runCatching { router.generate(prompt, maxTokens).first }.fold(
+            genRef.set(runCatching { router.generate(prompt, maxTokens, stops).first }.fold(
                 onSuccess = { it },
                 onFailure = { Result.failure<String>(it) },
             ))

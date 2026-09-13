@@ -46,28 +46,36 @@ data class ScreenObservation(
      * Grounded, MobileAgent-style listing: every line carries the element's real
      * center coordinates, so the model can only ever reference things that ARE
      * on screen (anti-hallucination by construction).
+     *
+     * compact=true (sub-1B local models): drops decorative containers with no
+     * text/description, caps text length and element count so the whole prompt
+     * stays inside what a tiny model can actually reason over.
      */
-    fun toCompact(maxElements: Int = 70): String {
+    fun toCompact(maxElements: Int = 70, maxTextChars: Int = 60, compact: Boolean = false): String {
         val sb = StringBuilder()
         sb.append("APP: ").append(packageName ?: "unknown").append('\n')
         activityName?.let { sb.append("SCREEN: ").append(it.substringAfterLast('.')).append('\n') }
-        val shown = elements.take(maxElements)
+        val pool = if (compact) {
+            elements.filter { it.interactive || !it.text.isNullOrBlank() || !it.desc.isNullOrBlank() }
+        } else elements
+        val shown = pool.take(maxElements)
         for (e in shown) {
             val bits = mutableListOf<String>()
             bits.add("role=${e.role}")
-            e.text?.let { bits.add("text=\"${it.take(60).replace("\n", " ")}\"") }
-            if (e.desc != null && e.text == null) bits.add("desc=\"${e.desc.take(40)}\"")
-            if (e.viewId != null) bits.add("id=${e.viewId.substringAfterLast('/').take(24)}")
+            e.text?.let { bits.add("text=\"${it.take(maxTextChars).replace("\n", " ")}\"") }
+            if (e.desc != null && e.text == null) bits.add("desc=\"${e.desc.take(if (compact) 20 else 40)}\"")
+            if (e.viewId != null && !compact) bits.add("id=${e.viewId.substringAfterLast('/').take(24)}")
             if (e.isPassword) bits.add("password=true")
             if (e.editable) bits.add("editable=true")
             if (e.scrollable) bits.add("scrollable=true")
-            if (e.selected) bits.add("selected=true")
+            if (e.selected && !compact) bits.add("selected=true")
             sb.append("[").append(e.idx).append("] ").append(bits.joinToString(" "))
             sb.append(" @(").append(e.centerX).append(",").append(e.centerY).append(")")
             sb.append('\n')
         }
-        if (elements.size > maxElements) {
-            sb.append("(+").append(elements.size - maxElements).append(" more elements hidden)\n")
+        val hidden = if (compact) pool.size - shown.size else elements.size - shown.size
+        if (hidden > 0) {
+            sb.append("(+").append(hidden).append(" more elements hidden)\n")
         }
         return sb.toString()
     }

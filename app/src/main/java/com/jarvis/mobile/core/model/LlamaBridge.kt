@@ -24,7 +24,19 @@ object LlamaBridge {
 
     external fun nativeLoadModel(path: String, contextSize: Int, threads: Int): Boolean
     external fun nativeIsLoaded(): Boolean
-    external fun nativeComplete(prompt: String, maxTokens: Int, listener: ProgressListener?): ByteArray?
+
+    /**
+     * One completion. [stopSequences] cut generation early the moment any of
+     * them appears in the output (native-side, so tokens/battery are saved);
+     * the matched marker itself is trimmed off the returned text.
+     */
+    external fun nativeComplete(
+        prompt: String,
+        maxTokens: Int,
+        listener: ProgressListener?,
+        stopSequences: Array<String>,
+    ): ByteArray?
+
     external fun nativeCancel()
     external fun nativeFree()
     external fun nativeContextSize(): Int

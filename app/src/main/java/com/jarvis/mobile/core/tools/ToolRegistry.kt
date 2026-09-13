@@ -34,5 +34,15 @@ object ToolRegistry {
         "- ${t.spec.name}($params) [${t.spec.risk}] ${t.spec.description}"
     }
 
+    /**
+     * Ultra-compact catalog for sub-1B local models: names + required args only,
+     * one line per few tools. Saves hundreds of prompt tokens that a tiny model
+     * would otherwise spend re-reading instead of answering.
+     */
+    fun catalogPromptCompact(): String = available().joinToString(" | ") { t ->
+        val req = t.spec.params.filter { it.required }.joinToString(",") { "${it.name}:${it.type}" }
+        if (req.isBlank()) t.spec.name else "${t.spec.name}($req)"
+    }
+
     private const val TAG = "tools"
 }

@@ -43,7 +43,7 @@ class RemoteOpenAiProvider(
         generate("Reply with exactly: OK", 8).mapCatching { it.ifBlank { "empty reply" } }
     }
 
-    override suspend fun generate(prompt: String, maxTokens: Int): Result<String> = withContext(Dispatchers.IO) {
+    override suspend fun generate(prompt: String, maxTokens: Int, stopSequences: List<String>): Result<String> = withContext(Dispatchers.IO) {
         if (settings.localOnly.first()) {
             return@withContext Result.failure(IllegalStateException("LOCAL ONLY mode is enabled - remote inference blocked"))
         }
@@ -59,6 +59,11 @@ class RemoteOpenAiProvider(
                     put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
                     put("max_tokens", maxTokens)
                     put("temperature", 0.25)
+                    // OpenAI-compatible stop sequences keep remote models from
+                    // echoing the prompt after the JSON too.
+                    if (stopSequences.isNotEmpty()) {
+                        put("stop", JSONArray(stopSequences.take(4)))
+                    }
                 }
             } else {
                 JSONObject().apply {
@@ -66,6 +71,9 @@ class RemoteOpenAiProvider(
                     put("prompt", prompt)
                     put("max_tokens", maxTokens)
                     put("temperature", 0.25)
+                    if (stopSequences.isNotEmpty()) {
+                        put("stop", JSONArray(stopSequences.take(4)))
+                    }
                 }
             }
             val path = if (chat) "/chat/completions" else "/completions"

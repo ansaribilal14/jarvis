@@ -6,6 +6,12 @@ interface LlmProvider {
     val displayName: String
     val isLocal: Boolean
     fun isReady(): Boolean
-    suspend fun generate(prompt: String, maxTokens: Int): Result<String>
+
+    /**
+     * [stopSequences]: generation should halt as soon as one of them appears.
+     * Local runtime enforces this natively (token/battery savings); remote
+     * providers receive it as the OpenAI-compatible "stop" parameter.
+     */
+    suspend fun generate(prompt: String, maxTokens: Int, stopSequences: List<String> = emptyList()): Result<String>
     fun unload() {}
 }
