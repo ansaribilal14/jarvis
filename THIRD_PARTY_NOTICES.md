@@ -21,6 +21,18 @@
 
 Users accept the respective model licenses when downloading them in-app.
 
+## Shizuku (v2.0 - precision touch capture bridge)
+| Component | License | Source |
+|---|---|---|
+| dev.rikka.shizuku:api / :provider 13.1.5 | Apache-2.0 | github.com/RikkaApps/Shizuku-api |
+Used to read the raw touchscreen stream (`getevent -t`) under the shell identity (root-free),
+the technique AutoX implements with root. Manifest provider + API permission declared; no Shizuku
+code is copied - consumed as Maven artifacts.
+
 ## Design references studied (no code copied)
 Google ARTEMIS, awesome-local-ai-android, shadergradient, liquid-logo,
 liquid-glass-js, react-three-fiber - used as architecture/design inspiration only.
+v2.0 research set: OpenTasker, Easer, AutoX (+2 forks), argus, MobileAgent - mechanisms credited
+in CHANGELOG 2.0.0 (Shizuku getevent capture = AutoX's root technique; trigger engine shape =
+OpenTasker/Easer; `{{title}}`/`{{text}}` dynamics = Easer DynamicsLink; capability-bus discipline
+= argus). No source code was copied from any of them.

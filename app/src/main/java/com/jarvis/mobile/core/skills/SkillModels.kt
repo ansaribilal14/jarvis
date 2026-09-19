@@ -2,6 +2,7 @@ package com.jarvis.mobile.core.skills
 
 import android.content.Context
 import com.jarvis.mobile.JarvisApp
+import com.jarvis.mobile.core.triggers.SkillTrigger
 import com.jarvis.mobile.util.Logx
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -65,6 +66,7 @@ data class SkillDefinition(
     val steps: List<SkillStep>,
     val source: String = "RECORDED", // RECORDED | GRILLED
     val interview: List<QAPair> = emptyList(),
+    val trigger: SkillTrigger? = null, // null = manual run only (v2.0 auto-triggers)
     val createdAtMs: Long = System.currentTimeMillis(),
     val lastRunAtMs: Long? = null,
     val runCount: Int = 0,

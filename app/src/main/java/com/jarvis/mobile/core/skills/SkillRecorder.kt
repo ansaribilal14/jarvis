@@ -25,16 +25,17 @@ import java.io.File
 /**
  * Skill recorder: turns the user's live UI actions into replayable [SkillStep]s.
  *
- * v1.10 - Layered capture (v1.9's motionEventSources approach was fundamentally
- * broken: that API CONSUMES touchscreen events instead of observing them, and
- * its "capture on" flag suppressed the working event fallback, so nothing was
- * ever recorded). Two layers now, with no flag ever silencing the other:
+ * v2.0 - Layered capture (v1.9's motionEventSources consumed touches; v1.10's
+ * TouchInteractionController depended on touch-exploration semantics that most
+ * ROMs never deliver without hijacking the tap - both reported "records
+ * nothing" on real devices). The capture stack now NEVER intercepts or alters
+ * a user interaction, and no flag can silence the fallback:
  *
- * 1. PRECISION TOUCH (API 34+, while recording only): a TouchInteractionController
- *    sees every physical touch DOWN with exact screen coordinates and instantly
- *    delegates the interaction back to the system, so the user's taps reach apps
- *    untouched (the same pass-through model TalkBack uses). Coordinates of every
- *    tap in EVERY app - Tasker-grade.
+ * 1. PRECISION TOUCH (primary, all Android versions): the raw kernel touch
+ *    stream (`getevent -t`) read through Shizuku (shell identity, root-free -
+ *    the AutoX-root technique). Every contact in every app with real screen
+ *    coordinates; taps, long-presses and swipes are classified from the
+ *    stream; the user's touches are observed, never consumed.
  * 2. APP EVENTS (all devices, always): TYPE_VIEW_CLICKED / LONG_CLICKED give
  *    semantic labels, TYPE_VIEW_TEXT_CHANGED gives typed content, list scrolls
  *    and app switches are captured too.
@@ -59,10 +60,12 @@ object SkillRecorder {
         val steps: List<SkillStep> = emptyList(),
         val finishedSteps: List<SkillStep>? = null, // set after stop - pending review
         val startedAtMs: Long = 0L,
-        /** True when precision touch capture is wired AND delivering (API 34+). */
+        /** True when the precision touch stream is delivering (Shizuku). */
         val precisionActive: Boolean = false,
         /** Raw touch DOWNs seen this session - live proof that capture works. */
         val rawTaps: Int = 0,
+        /** Honest capture description for the UI: what IS being recorded right now. */
+        val captureLayer: String = "EVENTS",
     )
 
     private val _state = MutableStateFlow(RecordingState())
@@ -75,6 +78,12 @@ object SkillRecorder {
     @Volatile private var lastTextAtMs: Long = 0L
     @Volatile private var lastScrollAtMs: Long = 0L
     @Volatile private var lastPkg: String? = null
+
+    /** Most recent precision-capture DOWN (px) - direction math for stream gestures. */
+    @Volatile private var lastRawDown: Pair<Int, Int>? = null
+
+    /** Called by [TouchStreamRecorder] before classifying a gesture. */
+    fun lastRawDownPx(): Pair<Int, Int>? = lastRawDown
 
     private val json = Json { ignoreUnknownKeys = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -122,6 +131,7 @@ object SkillRecorder {
         postNotification(JarvisApp.instance, steps.size)
         // Precision capture died with the old process - re-arm it now.
         JarvisAccessibilityServiceHolder.precisionEnable?.invoke()
+        com.jarvis.mobile.service.RecordBubble.show(JarvisApp.instance)
         Logx.i(TAG, "Recording resumed after restart: ${steps.size} steps")
         return true
     }
@@ -138,9 +148,11 @@ object SkillRecorder {
         lastTextKey = null
         suppress = false
         merger.reset()
-        // Arm precision touch capture (API 34+); no-op / safe-fallback otherwise.
+        // Arm precision touch capture (Shizuku touch stream); safe no-op + honest
+        // fallback status when unavailable.
         JarvisAccessibilityServiceHolder.precisionEnable?.invoke()
         postNotification(JarvisApp.instance, 0)
+        com.jarvis.mobile.service.RecordBubble.show(JarvisApp.instance)
         Logx.i(TAG, "Recording started")
     }
 
@@ -157,6 +169,7 @@ object SkillRecorder {
         // Restore normal touch BEFORE anything else - recording state must never
         // keep the touch pipeline interposed.
         JarvisAccessibilityServiceHolder.precisionDisable?.invoke()
+        com.jarvis.mobile.service.RecordBubble.hide(JarvisApp.instance)
         val flushed = merger.flush()
         val live = synchronized(stateLock) { _state.value.steps }
         val steps = (if (live.isEmpty()) loadStepsFromFile() else live) + flushed
@@ -182,11 +195,14 @@ object SkillRecorder {
         }
     }
 
-    /** Called by the accessibility service when precision capture is delivering events. */
+    /** Called by the touch-stream recorder when precision capture is delivering events. */
     fun setPrecision(on: Boolean) {
         synchronized(stateLock) {
             if (_state.value.precisionActive != on) {
-                _state.value = _state.value.copy(precisionActive = on)
+                _state.value = _state.value.copy(
+                    precisionActive = on,
+                    captureLayer = if (on) "PRECISION+EVENTS" else "EVENTS",
+                )
                 Logx.i(TAG, if (on) "Precision touch capture ACTIVE - every tap is recorded"
                              else "Precision touch capture unavailable - app-event capture only")
             }
@@ -206,6 +222,7 @@ object SkillRecorder {
         if (!st.active || suppress) return
         val pkg = currentPkg()
         if (pkg == JarvisApp.instance.packageName || pkg == "com.android.systemui") return
+        lastRawDown = x.toInt() to y.toInt()
         val swept = merger.onRawDown(downAtMs, x.toInt(), y.toInt())
         swept.forEach { commitRawStep(it) }
         synchronized(stateLock) {
@@ -218,9 +235,24 @@ object SkillRecorder {
         }
     }
 
+    /**
+     * A COMPLETE gesture classified from the precision stream (long-press or
+     * swipe; taps stay with the merger so a click event can still label them).
+     * The matching pending tap is cancelled first so nothing double-records.
+     */
+    fun onRawGesture(step: SkillStep) {
+        val st = _state.value
+        if (!st.active || suppress) return
+        val down = lastRawDown
+        if (down != null) merger.cancelNear(down.first, down.second)
+        lastRawDown = null
+        addStep(step.copy(pkg = step.pkg ?: currentPkg()))
+    }
+
     private fun commitRawStep(step: SkillStep) {
         addStep(step)
         enrichAsync(step, step.x?.toFloat(), step.y?.toFloat())
+        lastRawDown = null
     }
 
     private fun currentPkg(): String? =
@@ -396,6 +428,9 @@ object SkillRecorder {
         postNotification(JarvisApp.instance, _state.value.steps.size)
     }
 
+    /** Exposed for the floating REC bubble live counter. */
+    fun stepCount(): Int = _state.value.steps.size
+
     // ------------------------------------------------------------ notification
 
     fun postNotification(ctx: Context, stepCount: Int) {
@@ -509,6 +544,15 @@ class RawTapMerger(
     fun onEventScroll(now: Long): List<SkillStep> = synchronized(lock) {
         pending.removeAll { now - it.t <= windowMs }
         sweepLocked(now)
+    }
+
+    /**
+     * Drop the pending tap near (x,y) - the precision stream reclassified that
+     * DOWN as a long-press/swipe which commits itself; without this the pending
+     * would later commit as a duplicate tap.
+     */
+    fun cancelNear(x: Int, y: Int) = synchronized(lock) {
+        pending.removeAll { Math.abs(it.x - x) + Math.abs(it.y - y) <= radiusPx * 2 }
     }
 
     /** Commit pendings older than the window; drop anything still inside it. */

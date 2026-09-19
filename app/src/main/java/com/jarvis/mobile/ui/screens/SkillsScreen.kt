@@ -21,9 +21,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.core.agent.AgentEngine
+import com.jarvis.mobile.core.shizuku.ShizukuBridge
 import com.jarvis.mobile.core.skills.SkillDefinition
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.core.skills.SkillStore
+import com.jarvis.mobile.core.triggers.TimeTriggerScheduler
+import com.jarvis.mobile.core.triggers.TriggerEngine
 import com.jarvis.mobile.ui.theme.Accent
 import com.jarvis.mobile.ui.theme.Danger
 
@@ -36,10 +39,15 @@ fun SkillsScreen(openTab: (String) -> Unit) {
     val context = JarvisApp.instance
     val rec by SkillRecorder.state.collectAsState()
     val agentState by AgentEngine.state.collectAsState()
+    val shizuku by ShizukuBridge.state.collectAsState()
     var skills by remember { mutableStateOf(SkillStore.list(context)) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
+    var triggerLog by remember { mutableStateOf(TriggerEngine.recentLog) }
 
-    fun refresh() { skills = SkillStore.list(context) }
+    fun refresh() {
+        skills = SkillStore.list(context)
+        triggerLog = TriggerEngine.recentLog
+    }
 
     Column(
         Modifier
@@ -85,9 +93,8 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                         // guess whether anything is being recorded.
                         Text(
                             when {
-                                rec.precisionActive -> "Precision capture ON - ${rec.rawTaps} touches seen (every tap, in every app)"
-                                android.os.Build.VERSION.SDK_INT >= 34 -> "App-event capture - buttons, typing, scrolls, app switches (raw touch unavailable on this device)"
-                                else -> "App-event capture - button taps, typing, scrolls and app switches (exact touch capture needs Android 14+)"
+                                rec.precisionActive -> "PRECISION capture live - every tap in every app is recorded (${rec.rawTaps} raw touches seen)"
+                                else -> "App-event capture - buttons, typing, scrolls, app switches. Install Shizuku below for tap-by-tap precision (even in apps that hide from accessibility)."
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = if (rec.precisionActive) Accent else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -162,16 +169,84 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Start recording") }
                         Text(
-                            "Every single tap is captured - like Tasker. Use your phone normally: " +
-                                "taps, long-presses, typing, swipes and app switches are all recorded " +
-                                "with real screen coordinates (on Android 14+ even in apps that hide " +
-                                "from accessibility). The recording keeps running while you are in " +
-                                "other apps - come back and tap Stop when done.",
+                            "A red REC bubble floats over every app with a live step counter - you always see capture working. " +
+                                "Use your phone normally: taps, long-presses, typing, swipes and app switches are all recorded " +
+                                "with real screen coordinates. Come back and tap Stop when done.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
+            }
+        }
+
+        // ------------------------------------------------- precision setup row
+        if (shizuku.status == ShizukuBridge.Status.READY) {
+            Text(
+                "Shizuku connected - precision touch capture is available on this device.",
+                style = MaterialTheme.typography.labelSmall,
+                color = com.jarvis.mobile.ui.theme.Ok,
+            )
+        } else {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Want EVERY tap recorded - even in games and canvas apps?", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Install Shizuku (free, open-source), start it once, then tap Connect. JARVIS then watches the " +
+                            "raw touchscreen stream and records exact coordinates of every contact, in every app, " +
+                            "without changing how your phone feels.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    val i = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                                    if (i != null) context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    else context.startActivity(
+                                        android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/"))
+                                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (shizuku.status == ShizukuBridge.Status.NOT_INSTALLED) "Get Shizuku" else "Open Shizuku") }
+                        OutlinedButton(
+                            onClick = {
+                                ShizukuBridge.refresh()
+                                ShizukuBridge.requestPermission()
+                            },
+                            enabled = shizuku.status == ShizukuBridge.Status.NOT_AUTHORIZED || shizuku.status == ShizukuBridge.Status.READY,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Connect") }
+                    }
+                    Text(
+                        when (shizuku.status) {
+                            ShizukuBridge.Status.NOT_RUNNING -> "Shizuku status: not running - start it in the Shizuku app (wireless debugging or adb)."
+                            ShizukuBridge.Status.NOT_AUTHORIZED -> "Shizuku status: running - tap Connect to grant JARVIS access."
+                            else -> "Shizuku status: not installed."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        // ------------------------------------------------------- trigger log
+        if (triggerLog.isNotEmpty()) {
+            Text("RECENT TRIGGERS", style = MaterialTheme.typography.labelSmall, color = Accent)
+            triggerLog.take(5).forEach { ev ->
+                Text(
+                    "• ${java.text.SimpleDateFormat("MMM d HH:mm", java.util.Locale.US).format(ev.at)} - ${ev.trigger} → ${ev.skill}${if (ev.fired) "" else " (skipped: ${ev.why})"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
@@ -204,7 +279,8 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                     }
                     Text(
                         "${skill.steps.size} steps · run ${skill.runCount}x" +
-                            (skill.lastRunAtMs?.let { " · last ${java.text.SimpleDateFormat("MMM d", java.util.Locale.US).format(it)}" } ?: ""),
+                            (skill.lastRunAtMs?.let { " · last ${java.text.SimpleDateFormat("MMM d", java.util.Locale.US).format(it)}" } ?: "") +
+                            (skill.trigger?.let { " · ${it.describe()}" } ?: ""),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -243,6 +319,7 @@ fun SkillsScreen(openTab: (String) -> Unit) {
             text = { Text("The recording and its interview notes are removed from this phone. Cannot be undone.") },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
+                    TimeTriggerScheduler.cancel(context, id)
                     SkillStore.delete(context, id)
                     confirmDelete = null
                     refresh()

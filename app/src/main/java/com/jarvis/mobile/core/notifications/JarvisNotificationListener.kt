@@ -39,6 +39,12 @@ class JarvisNotificationListener : NotificationListenerService() {
                 at = n.postTime,
             ),
         )
+        // v2.0: NOTIFICATION triggers fire skills ({{title}}/{{text}} dynamics).
+        runCatching {
+            com.jarvis.mobile.core.triggers.TriggerEngine.onNotification(
+                JarvisApp.instance, n.packageName ?: "?", title, text,
+            )
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {}

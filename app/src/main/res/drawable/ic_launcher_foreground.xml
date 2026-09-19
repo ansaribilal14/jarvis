@@ -1,26 +1,79 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  JARVIS v2.0 emblem: the agent graph.
+  A glowing core (the engine), an attention ring, and three orbital nodes
+  (observe / decide / act) connected to the core - the agent loop as a mark.
+  Drawn inside the 66dp adaptive-icon safe zone (viewport 108, center 54,54).
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- JARVIS sentinel mark: broken outer arc + inner arc + core dot -->
+
+    <!-- spokes: core -> orbital nodes -->
     <path
-        android:pathData="M54,26 A28,28 0 1 1 26.7,44.6"
-        android:strokeWidth="5.5"
-        android:strokeColor="#3FD8C2"
+        android:pathData="M54,54 L31,37.5"
+        android:strokeColor="#2FE6C8"
+        android:strokeAlpha="0.55"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,54 L77,41"
+        android:strokeColor="#9B8CFF"
+        android:strokeAlpha="0.55"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,54 L47,76.5"
+        android:strokeColor="#7DE8E0"
+        android:strokeAlpha="0.55"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round" />
+
+    <!-- attention ring (open arc = always listening) -->
+    <path
+        android:pathData="M54,42.5 A11.5,11.5 0 1,1 53.99,42.5"
+        android:strokeAlpha="0.0"
+        android:strokeWidth="0"/>
+
+    <path
+        android:pathData="M54,41.5 A12.5,12.5 0 1,0 54.01,41.5 Z"
+        android:strokeColor="#2FE6C8"
+        android:strokeAlpha="0.9"
+        android:strokeWidth="3"
+        android:trimPathStart="0.08"
+        android:trimPathEnd="0.92"
         android:strokeLineCap="round"
         android:fillColor="#00000000" />
+
+    <!-- core -->
     <path
-        android:pathData="M54,38 A16,16 0 1 0 70,46"
-        android:strokeWidth="4.5"
-        android:strokeColor="#2A9D8F"
-        android:strokeLineCap="round"
-        android:fillColor="#00000000" />
+        android:pathData="M54,47.6 a6.4,6.4 0 1,0 0.01,0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54" android:centerY="54" android:gradientRadius="7"
+                android:startColor="#A9FFF1"
+                android:endColor="#0FA390" />
+        </aapt:attr>
+    </path>
+
+    <!-- orbital nodes: observe / decide / act -->
     <path
-        android:pathData="M54,48 a6,6 0 1 1 0,12 a6,6 0 1 1 0,-12 z"
-        android:fillColor="#EAF4F2" />
+        android:pathData="M31,33.6 a3.9,3.9 0 1,0 0.01,0 Z"
+        android:fillColor="#2FE6C8" />
     <path
-        android:pathData="M26.7,44.6 L21,42.4 L24.2,37.2 Z"
-        android:fillColor="#3FD8C2" />
+        android:pathData="M77,37.1 a3.9,3.9 0 1,0 0.01,0 Z"
+        android:fillColor="#9B8CFF" />
+    <path
+        android:pathData="M47,72.6 a3.9,3.9 0 1,0 0.01,0 Z"
+        android:fillColor="#7DE8E0" />
+
+    <!-- pulse dot on the arc (activity) -->
+    <path
+        android:pathData="M63.4,45.2 a1.8,1.8 0 1,0 0.01,0 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.92" />
 </vector>

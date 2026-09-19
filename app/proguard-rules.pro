@@ -28,5 +28,12 @@
 -keep class com.google.mlkit.** { *; }
 -keep class com.google.android.gms.internal.mlkit_vision_text* { *; }
 
+# Shizuku privileged-shell bridge (precision touch capture) - binder + AIDL surface
+-keep class rikka.shizuku.** { *; }
+-keep class dev.rikka.shizuku.** { *; }
+-keep class moe.shizuku.** { *; }
+-dontwarn moe.shizuku.**
+-dontwarn rikka.**
+
 # llama.cpp native allocations: never strip Gson-like access (none used), keep exceptions
 -keepattributes Exceptions

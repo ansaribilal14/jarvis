@@ -24,6 +24,7 @@ real device, run the TESTING.md scenario list.
 | version | code | theme |
 |---|---|---|
 | v1.10.0 | 14 | recorder fixed: precision touch capture via TouchInteractionController + fused event/raw layers, honest capture-status UI (v1.9 motionEventSources mechanism removed - it consumes touches and suppressed the fallback) |
+| v2.0.0 | 15 | overhaul: Shizuku getevent precision capture + REC bubble console, trigger engine (app/time/notification/battery), M3 Expressive theme, new logo, skill trigger editor |
 | v1.9.0 | 13 | Tasker-grade raw-touch skill recorder, MobileAgent-style flat action loop, any-provider API mode (OpenRouter/DeepSeek/NIM/Ollama) |
 | v1.8.0 | 12 | grammar-constrained decoding, gesture-completion callbacks, agent state machine, grounding-core tests |
 | v1.7.0 | 11 | skill recorder + /grill-me + expert-review hardening |

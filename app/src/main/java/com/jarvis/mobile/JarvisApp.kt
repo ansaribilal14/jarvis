@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import com.jarvis.mobile.accessibility.JarvisAccessibilityService
 import com.jarvis.mobile.core.agent.AgentEngine
 import com.jarvis.mobile.core.memory.MemoryStore
 import com.jarvis.mobile.core.model.DeviceProfiler
@@ -12,8 +13,11 @@ import com.jarvis.mobile.core.model.RemoteOpenAiProvider
 import com.jarvis.mobile.core.notifications.NotificationCache
 import com.jarvis.mobile.core.remote.TelegramRemote
 import com.jarvis.mobile.core.routines.RoutineManager
+import com.jarvis.mobile.core.shizuku.ShizukuBridge
 import com.jarvis.mobile.core.tools.ToolRegistry
 import com.jarvis.mobile.core.tools.impl.buildToolSet
+import com.jarvis.mobile.core.triggers.TimeTriggerScheduler
+import com.jarvis.mobile.core.triggers.TriggerEngine
 import com.jarvis.mobile.core.voice.VoiceOutput
 import com.jarvis.mobile.data.db.AppDatabase
 import com.jarvis.mobile.data.settings.SecureVault
@@ -69,6 +73,18 @@ class JarvisApp : Application() {
         CoroutineScope(Dispatchers.Default).launch {
             if (runCatching { container.settings.telegramRemoteEnabled.first() }.getOrDefault(false)) {
                 TelegramRemote.start(this@JarvisApp)
+            }
+        }
+        // v2.0 overhaul pieces:
+        ShizukuBridge.init()
+        runCatching { TimeTriggerScheduler.armAll(this) }
+        // App open/close triggers ride the accessibility window stream (free -
+        // the service is already required for recording/replay).
+        CoroutineScope(Dispatchers.Default).launch {
+            JarvisAccessibilityService.windowEvents.collect { (pkg, _) ->
+                val p = pkg ?: return@collect
+                if (p == packageName || p == "com.android.systemui") return@collect
+                runCatching { TriggerEngine.onAppEvent(this@JarvisApp, p, opened = true) }
             }
         }
     }

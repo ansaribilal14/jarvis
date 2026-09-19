@@ -31,6 +31,20 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
 (~21 MB); model files are downloaded separately inside the app.
 
+## What's new in v2.0.0
+
+- **The recorder, rebuilt on a mechanism that cannot lie to you.** Tap coordinates now come from
+  the raw touchscreen stream read through Shizuku (the root-free AutoX technique - observes every
+  kernel contact in every app and consumes nothing), the accessibility-event layer stays on as a
+  fallback that nothing can silence, and a floating red **REC bubble with a live step counter**
+  proves capture works at a glance from any app.
+- **Skills can now trigger themselves**: app open/close, daily time (exact alarms), notification
+  content (with `{{title}}`/`{{text}}` placeholders), battery low - with cooldowns, boot re-arm
+  and a recent-triggers log. MacroDroid/Easer-class automation on top of your recorded skills.
+- **Material 3 Expressive UI + new agent-graph logo**, dynamic color on Android 12+.
+- Optional **Shizuku** (free, open-source) unlocks tap-by-tap precision everywhere; without it the
+  app-event layer still records buttons, typing, scrolls and app switches.
+
 ## What's new in v1.10.0
 
 - **The recorder fix that actually fixes it.** v1.9's raw-touch mechanism turned out to consume

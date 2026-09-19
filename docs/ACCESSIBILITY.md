@@ -47,3 +47,23 @@ ML Kit on-device recognizer when the a11y tree is empty/sparse. Images never lea
 - "Send" is never trusted blindly: taps report VERIFIED only when a window/content change
   was observed, else UNVERIFIED.
 - Text entry verifies by re-reading the field.
+
+## Precision touch capture (v2.0)
+
+v1.9 used `AccessibilityServiceInfo.motionEventSources` (consumes the user's touches) and v1.10
+used a `TouchInteractionController` gated on `FLAG_REQUEST_TOUCH_EXPLORATION_MODE` (depends on
+touch-exploration semantics most ROMs do not deliver). Both are removed in v2.0.
+
+The precision layer now reads the raw kernel touchscreen stream (`getevent -t`) through Shizuku -
+the same technique AutoX implements with root, root-free via the shell identity. Consequences:
+
+- Works on every supported Android version, in every app, including games and canvas views that
+  never emit accessibility events.
+- The stream is observational: no touch is consumed, intercepted or delayed; the accessibility
+  service itself does not request touch exploration any more.
+- Device probing (`getevent -pl`) finds the touchscreen (the ABS_MT_POSITION_X/Y device with the
+  widest X range); raw units are scaled to screen pixels using the device's ABS min/max and the
+  current display size (the scrcpy ScreenMetrics approach).
+- The a11y event layer (TYPE_VIEW_CLICKED/LONG_CLICKED/TEXT_CHANGED/SCROLLED/WINDOW_STATE_CHANGED)
+  stays on as a fallback that no flag can silence, and `RawTapMerger` fuses both layers into
+  semantic steps with real coordinates.

@@ -24,6 +24,8 @@ import com.jarvis.mobile.core.agent.AgentEngine
 import com.jarvis.mobile.core.skills.SkillDefinition
 import com.jarvis.mobile.core.skills.SkillStep
 import com.jarvis.mobile.core.skills.SkillStore
+import com.jarvis.mobile.core.triggers.SkillTrigger
+import com.jarvis.mobile.core.triggers.TimeTriggerScheduler
 import com.jarvis.mobile.ui.theme.Accent
 import com.jarvis.mobile.ui.theme.Danger
 
@@ -48,6 +50,7 @@ fun SkillDraftScreen(onClose: () -> Unit) {
     var notes by remember { mutableStateOf(original!!.notes) }
     val steps = remember { androidx.compose.runtime.mutableStateListOf<SkillStep>().apply { addAll(original!!.steps) } }
     var editIndex by remember { mutableStateOf<Int?>(null) } // null = closed, -1 = adding new
+    var trigger by remember { mutableStateOf(original!!.trigger) }
 
     Column(
         Modifier
@@ -92,6 +95,9 @@ fun SkillDraftScreen(onClose: () -> Unit) {
             )
         }
 
+        // -------------------------------------------------- trigger editor
+        TriggerEditor(trigger) { trigger = it }
+
         Text("STEPS (${steps.size})", style = MaterialTheme.typography.labelSmall, color = Accent)
         steps.forEachIndexed { i, step ->
             Surface(
@@ -118,19 +124,9 @@ fun SkillDraftScreen(onClose: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {
-                    val def = SkillDefinition(
-                        id = original!!.id,
-                        name = name.ifBlank { "My skill" },
-                        description = description,
-                        notes = notes,
-                        steps = steps.toList(),
-                        source = original!!.source,
-                        interview = original!!.interview,
-                        createdAtMs = original!!.createdAtMs,
-                        lastRunAtMs = original!!.lastRunAtMs,
-                        runCount = original!!.runCount,
-                    )
+                    val def = buildDefinition(name, description, notes, steps.toList(), trigger)
                     SkillStore.save(JarvisApp.instance, def)
+                    TimeTriggerScheduler.arm(JarvisApp.instance, def)
                     SkillDraftBus.draft.value = null
                     onClose()
                 },
@@ -139,19 +135,9 @@ fun SkillDraftScreen(onClose: () -> Unit) {
             ) { Text("Save skill") }
             OutlinedButton(
                 onClick = {
-                    val def = SkillDefinition(
-                        id = original!!.id,
-                        name = name.ifBlank { "My skill" },
-                        description = description,
-                        notes = notes,
-                        steps = steps.toList(),
-                        source = original!!.source,
-                        interview = original!!.interview,
-                        createdAtMs = original!!.createdAtMs,
-                        lastRunAtMs = original!!.lastRunAtMs,
-                        runCount = original!!.runCount,
-                    )
+                    val def = buildDefinition(name, description, notes, steps.toList(), trigger)
                     SkillStore.save(JarvisApp.instance, def)
+                    TimeTriggerScheduler.arm(JarvisApp.instance, def)
                     SkillDraftBus.draft.value = null
                     AgentEngine.runSkill(def)
                     onClose()
@@ -174,6 +160,117 @@ fun SkillDraftScreen(onClose: () -> Unit) {
                 editIndex = null
             },
         )
+    }
+}
+
+private fun buildDefinition(
+    name: String,
+    description: String,
+    notes: String,
+    steps: List<SkillStep>,
+    trigger: SkillTrigger?,
+): SkillDefinition = SkillDefinition(
+    id = SkillDraftBus.draft.value?.id ?: SkillStore.newId(),
+    name = name.ifBlank { "My skill" },
+    description = description,
+    notes = notes,
+    steps = steps,
+    source = SkillDraftBus.draft.value?.source ?: "RECORDED",
+    interview = SkillDraftBus.draft.value?.interview ?: emptyList(),
+    trigger = trigger,
+    createdAtMs = SkillDraftBus.draft.value?.createdAtMs ?: System.currentTimeMillis(),
+    lastRunAtMs = SkillDraftBus.draft.value?.lastRunAtMs,
+    runCount = SkillDraftBus.draft.value?.runCount ?: 0,
+)
+
+@Composable
+private fun TriggerEditor(trigger: SkillTrigger?, onChange: (SkillTrigger?) -> Unit) {
+    var tType by remember(trigger) { mutableStateOf(trigger?.type ?: "MANUAL") }
+    var pkg by remember(trigger) { mutableStateOf(trigger?.pkg ?: "") }
+    var text by remember(trigger) { mutableStateOf(trigger?.text ?: "") }
+    var hour by remember(trigger) { mutableStateOf((trigger?.hour ?: 8).coerceIn(0, 23).toString()) }
+    var minute by remember(trigger) { mutableStateOf((trigger?.minute ?: 0).coerceIn(0, 59).toString()) }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("AUTOMATION", style = MaterialTheme.typography.labelSmall, color = Accent)
+            Text(
+                "When should this skill run by itself?",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("MANUAL", "APP_OPEN", "APP_CLOSE", "TIME", "NOTIFICATION", "BATTERY_LOW").forEach { t ->
+                    Text(
+                        t.removePrefix("APP_").removeSuffix("_LOW").lowercase().replaceFirstChar { it.uppercase() }
+                            .let { if (t == "APP_OPEN") "App opens" else if (t == "APP_CLOSE") "App closes" else if (t == "NOTIFICATION") "Notification" else if (t == "BATTERY_LOW") "Battery low" else it },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (t == tType) Accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .border(1.dp, if (t == tType) Accent else MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .clickable { tType = t },
+                    )
+                }
+            }
+            when (tType) {
+                "APP_OPEN", "APP_CLOSE" -> OutlinedTextField(
+                    value = pkg, onValueChange = { pkg = it },
+                    label = { Text("Package (e.g. com.whatsapp)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent),
+                )
+                "TIME" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = hour, onValueChange = { hour = it }, label = { Text("Hour (0-23)") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = minute, onValueChange = { minute = it }, label = { Text("Minute (0-59)") }, singleLine = true, modifier = Modifier.weight(1f))
+                }
+                "NOTIFICATION" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = pkg, onValueChange = { pkg = it },
+                        label = { Text("Package (blank = any app)") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent),
+                    )
+                    OutlinedTextField(
+                        value = text, onValueChange = { text = it },
+                        label = { Text("Contains text (blank = anything)") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent),
+                    )
+                    Text(
+                        "Use {{title}} / {{text}} in a typed step to forward the notification content.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            val current = trigger
+            val changed = when {
+                tType == "MANUAL" -> current != null
+                tType != (current?.type ?: "MANUAL") -> true
+                else -> current != SkillTrigger(
+                    type = tType, pkg = pkg.ifBlank { null }, hour = hour.toIntOrNull() ?: -1,
+                    minute = minute.toIntOrNull() ?: -1, text = text.ifBlank { null },
+                    cooldownSec = current?.cooldownSec ?: 60,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(trigger?.describe() ?: "Runs only when you tap Run", style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                if (tType != "MANUAL") {
+                    TextButton(onClick = { onChange(SkillTrigger(type = tType, pkg = pkg.ifBlank { null }, hour = hour.toIntOrNull() ?: -1, minute = minute.toIntOrNull() ?: -1, text = text.ifBlank { null })) }) { Text("Apply") }
+                }
+                if (tType == "MANUAL" && current != null) {
+                    TextButton(onClick = { onChange(null) }) { Text("Remove trigger") }
+                }
+                if (tType != "MANUAL" && !changed) {
+                    Text("armed", style = MaterialTheme.typography.labelSmall, color = com.jarvis.mobile.ui.theme.Ok)
+                }
+            }
+        }
     }
 }
 

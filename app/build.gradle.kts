@@ -15,8 +15,8 @@ android {
         applicationId = "com.jarvis.mobile"
         minSdk = 29
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.10.0"
+        versionCode = 15
+        versionName = "2.0.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -93,6 +93,10 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
+    // Shizuku (Apache-2.0): privileged shell for precision touch capture (getevent)
+    // and background app launches without root - same capability bus argus/AutoX use.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

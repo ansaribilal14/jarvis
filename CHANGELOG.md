@@ -3,6 +3,51 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [2.0.0] - The overhaul: root-free Tasker-grade recording, trigger engine, floating console, Material 3 Expressive
+
+*Research base: OpenTasker, Easer, AutoX (3 forks), argus and the MobileAgent demo were cloned and
+studied line-by-line; the mechanisms below credit them explicitly.*
+
+- **Skill recorder v3 - "records nothing" is structurally impossible now.** v1.9/v1.10 tried to get
+  tap coordinates from framework touch-interception APIs (`motionEventSources`, then a
+  TouchInteractionController gated on `FLAG_REQUEST_TOUCH_EXPLORATION_MODE`); the first consumes
+  touches, the second depends on touch-exploration semantics that most ROMs never deliver without
+  hijacking the tap. Both mechanisms are **deleted**. The precision layer is now the same technique
+  AutoX uses with root, made root-free through **Shizuku** (the argus capability bus): a
+  `getevent -t` stream read under the shell identity observes every kernel touchscreen contact
+  with exact coordinates, in every app (games, canvases, WebView), while consuming nothing - the
+  phone feels 100% identical while recording. The accessibility-event layer (clicks, typing,
+  scrolls, app switches) stays on as a never-silenced fallback, and the pure-JVM `RawTapMerger`
+  still fuses both into semantic steps.
+- **Shizuku bridge** (`core/shizuku/`): honest 4-state machine (not installed / not running / not
+  authorized / ready), one-tap setup card on the Skills screen (Get Shizuku -> Connect), argv-array
+  commands only. Touch devices are probed via `getevent -pl`; raw digitizer units are scaled to
+  screen pixels with the scrcpy ScreenMetrics approach.
+- **Self-diagnosing REC bubble** (AutoX-style floating console): while recording, a draggable
+  always-on-top pill shows a LIVE step counter over any app - every captured tap increments it, so
+  "is it recording?" is answered at a glance from any app; tapping it expands the honest
+  capture-layer status and a Stop button.
+- **Trigger engine (Easer/OpenTasker grade)**: skills can now fire themselves - APP_OPEN /
+  APP_CLOSE (rides the accessibility window stream), TIME (exact `AlarmManager.setExactAndAllowWhileIdle`,
+  honest inexact fallback without the permission), NOTIFICATION (the existing
+  NotificationListenerService, with `{{title}}`/`{{text}}` dynamics substituted into typed steps,
+  the Easer DynamicsLink pattern), and BATTERY_LOW (system broadcast). Cooldowns, agent-busy
+  guard, boot/update re-arm (`BootReceiver`), and a RECENT TRIGGERS run log on the Skills screen
+  (OpenTasker's RunLog attribution, mini).
+- **Skill model extended, backward compatible**: optional `trigger` on `SkillDefinition`
+  (`@Serializable` default null - old JSON files load untouched); full trigger editor in the
+  skill draft screen.
+- **Material 3 Expressive UI**: expanded tonal scheme (primary container / tertiary "plasma
+  violet" / surface container tiers), dynamic color on Android 12+ (Material You) with the JARVIS
+  brand as fallback, expressive shape geometry (18-32dp large radii), tightened emphasis
+  typography ladder. The whole app inherits via `MaterialTheme.shapes` + scheme with zero
+  call-site churn.
+- **New logo**: the agent graph - a glowing core with an attention arc and three orbital nodes
+  (observe / decide / act) on a deep-space gradient, adaptive + monochrome (themed icons) layers.
+- **Tests**: 6 new JVM cases for the touch-stream codec (line parsing, device probe, tap
+  classification, unit->pixel scaling, multi-slot first-finger policy, flush, swipe movement).
+- CI/release artifacts unchanged (signed APK + SHA-256 + Telegram delivery).
+
 ## [1.10.0] - Recorder actually fixed: precision touch capture (the v1.9 mechanism was broken)
 
 - **Honest root cause of "records nothing".** v1.9's raw-touch layer used

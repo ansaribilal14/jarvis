@@ -24,6 +24,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Shizuku privileged-shell bridge (precision touch capture + background launches). -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
     <!-- Enumerate launchable apps for open_app without QUERY_ALL_PACKAGES. -->
     <queries>
@@ -31,6 +34,9 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- Shizuku manager visibility (precision touch capture bridge). -->
+        <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="rikka.shizuku" />
         <!-- Comms/media tools target these packages explicitly (API 30+ visibility). -->
         <package android:name="com.whatsapp" />
         <package android:name="org.telegram.messenger" />
@@ -92,6 +98,36 @@
         <receiver
             android:name=".core.skills.SkillRecReceiver"
             android:exported="false" />
+
+        <!-- Trigger engine: time-based skill firing (AlarmManager) + survival. -->
+        <receiver
+            android:name=".core.triggers.TriggerAlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".core.triggers.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".core.triggers.PowerTriggerReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BATTERY_LOW" />
+                <action android:name="android.intent.action.BATTERY_OKAY" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Shizuku provider: required handshake for the privileged-shell bridge. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <service
             android:name=".accessibility.JarvisAccessibilityService"
