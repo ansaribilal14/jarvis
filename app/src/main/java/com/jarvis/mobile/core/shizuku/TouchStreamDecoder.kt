@@ -196,6 +196,11 @@ class TouchStreamAnalyzer(
         val y = slotY[slot] ?: downY
         val moved = kotlin.math.max(kotlin.math.abs(x - downX), kotlin.math.abs(y - downY))
         primarySlot = -1
+        // Clear the slot's positions: otherwise, when the lift arrives via
+        // tracking-id -1 BEFORE BTN_TOUCH 0 (protocol B), the still-true touchDown
+        // state would let tryContactStart re-fire a phantom DOWN with stale coords.
+        slotX.remove(slot)
+        slotY.remove(slot)
         out.add(TouchStreamDecoder.TouchEvent.Up(x, y, durMs, moved))
     }
 

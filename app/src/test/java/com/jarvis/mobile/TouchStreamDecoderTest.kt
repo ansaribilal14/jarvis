@@ -80,7 +80,7 @@ class TouchStreamDecoderTest {
     // --------------------------------------------------------- tap classification
 
     private val tapTranscript = listOf(
-        "0003 003f 00000000", // ABS_MT_SLOT 0
+        "0003 002f 00000000", // ABS_MT_SLOT 0
         "0003 0039 0000007b", // ABS_MT_TRACKING_ID 123
         "0003 0035 000002d0", // X raw 720
         "0003 0036 000004b0", // Y raw 1200
@@ -123,7 +123,7 @@ class TouchStreamDecoderTest {
     fun `second finger is ignored while the first is down`() {
         val d = decoder()
         val first = listOf(
-            "0003 003f 00000000", // SLOT 0
+            "0003 002f 00000000", // SLOT 0
             "0003 0039 00000001", // TRACKING_ID
             "0003 0035 00000064", // x=100
             "0003 0036 000000c8", // y=200
@@ -133,19 +133,19 @@ class TouchStreamDecoderTest {
         assertEquals(100, (first[0] as TouchStreamDecoder.TouchEvent.Down).x)
 
         // second finger: slot 1 gets its own tracking id + position
-        d.onLine("0003 003f 00000001", 2L)
+        d.onLine("0003 002f 00000001", 2L)
         d.onLine("0003 0039 00000002", 2L)
         d.onLine("0003 0035 00000190", 2L)
         d.onLine("0003 0036 000001f4", 2L)
         assertEquals(0, d.onLine("0000 0000 00000000", 2L).size)
 
         // second finger lifts: tracking id -1 on slot 1 -> NOT our primary
-        d.onLine("0003 003f 00000001", 3L)
+        d.onLine("0003 002f 00000001", 3L)
         val lift2 = d.onLine("0003 0039 ffffffff", 3L)
         assertTrue(lift2.isEmpty())
 
         // first finger lifts
-        d.onLine("0003 003f 00000000", 4L)
+        d.onLine("0003 002f 00000000", 4L)
         val lift1 = d.onLine("0003 0039 ffffffff", 4L)
         assertEquals(1, lift1.size)
         val up = lift1[0] as TouchStreamDecoder.TouchEvent.Up
@@ -173,7 +173,7 @@ class TouchStreamDecoderTest {
     fun `a swipe reports real movement`() {
         val d = decoder()
         val out = listOf(
-            "0003 003f 00000000", // SLOT 0
+            "0003 002f 00000000", // SLOT 0
             "0003 0039 00000005", // TRACKING_ID
             "0003 0035 000002bc", // x 700
             "0003 0036 00000898", // y 2200
