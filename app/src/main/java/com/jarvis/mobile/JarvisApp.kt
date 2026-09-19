@@ -75,6 +75,13 @@ class JarvisApp : Application() {
                 TelegramRemote.start(this@JarvisApp)
             }
         }
+        // Discord notification channel (v2.2): one-way push of task outcomes;
+        // starts only when enabled with token + channel configured.
+        CoroutineScope(Dispatchers.Default).launch {
+            if (runCatching { container.settings.discordEnabled.first() }.getOrDefault(false)) {
+                com.jarvis.mobile.core.remote.DiscordRemote.start(this@JarvisApp)
+            }
+        }
         // v2.0 overhaul pieces:
         ShizukuBridge.init()
         // v2.1: built-in (in-app) privileged shell - wire the key storage dir and

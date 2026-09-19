@@ -3,6 +3,7 @@ package com.jarvis.mobile.ui.screens
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,8 @@ import com.jarvis.mobile.service.OverlayService
 import com.jarvis.mobile.ui.components.SectionCard
 import com.jarvis.mobile.ui.components.StatusChip
 import com.jarvis.mobile.ui.theme.Accent
+import com.jarvis.mobile.ui.theme.Danger
+import com.jarvis.mobile.ui.theme.Ok
 import kotlinx.coroutines.launch
 
 /** Settings (spec: APP SETTINGS) - everything discoverable, nothing buried. */
@@ -134,6 +137,100 @@ fun SettingsScreen() {
                 }) { Text("Unbind chat (rebind on next message)") }
             } else {
                 Text("No chat bound yet - send any message to your bot and it will bind automatically.", style = MaterialTheme.typography.labelMedium, color = Accent)
+            }
+        }
+
+        SectionCard("Discord notifications") {
+            val dcEnabled by s.discordEnabled.collectAsState(initial = false)
+            val dcChannel by s.discordChannelId.collectAsState(initial = "")
+            SettingToggle("Push task results to Discord", dcEnabled) { on ->
+                scope.launch {
+                    s.setDiscordEnabled(on)
+                    if (on) com.jarvis.mobile.core.remote.DiscordRemote.restart(context)
+                    else com.jarvis.mobile.core.remote.DiscordRemote.stop()
+                }
+            }
+            Text(
+                "One-way channel: when a task finishes (or fails), JARVIS posts the result to one of your Discord channels. Create an application at discord.com/developers, add a bot, copy its token, and invite it to your server with the \"bot\" scope. Inbound commands stay on Telegram.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            var dcToken by remember { mutableStateOf(container.vault.discordBotToken) }
+            OutlinedTextField(
+                dcToken,
+                { dcToken = it },
+                label = { Text("Bot token (Developer Portal → Bot → Reset Token)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            )
+            var dcChannelField by remember(dcChannel) { mutableStateOf(dcChannel) }
+            OutlinedTextField(
+                dcChannelField,
+                { dcChannelField = it },
+                label = { Text("Channel ID (Developer Mode → right-click channel → Copy ID)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            var dcTest by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+            var dcBusy by remember { mutableStateOf(false) }
+            var channelList by remember { mutableStateOf<List<com.jarvis.mobile.core.remote.DiscordRemote.ChannelInfo>?>(null) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    scope.launch {
+                        container.vault.discordBotToken = dcToken.trim()
+                        s.setDiscordChannelId(dcChannelField.trim())
+                        dcBusy = true
+                        val r = com.jarvis.mobile.core.remote.DiscordRemote.verify(dcToken.trim(), dcChannelField.trim())
+                        dcTest = r.fold(
+                            onSuccess = { it to true },
+                            onFailure = { "Test failed: ${it.message?.take(110)}" to false },
+                        )
+                        dcBusy = false
+                    }
+                }) { Text(if (dcBusy) "Testing…" else "Save & send test") }
+                TextButton(onClick = {
+                    scope.launch {
+                        dcBusy = true
+                        val r = com.jarvis.mobile.core.remote.DiscordRemote.fetchChannels(dcToken.trim().ifBlank { container.vault.discordBotToken })
+                        r.fold(
+                            onSuccess = { channelList = it },
+                            onFailure = { dcTest = "Channel fetch failed: ${it.message?.take(110)}" to false },
+                        )
+                        dcBusy = false
+                    }
+                }) { Text("Fetch my channels") }
+            }
+            channelList?.let { list ->
+                if (list.isEmpty()) {
+                    Text("No text channels found - is the bot actually in a server?", style = MaterialTheme.typography.bodySmall, color = Danger)
+                } else {
+                    Text(
+                        "Tap a channel to use it:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Accent,
+                    )
+                    list.take(12).forEach { c ->
+                        Text(
+                            "#${c.channelName}  ·  ${c.guildName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Accent,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    dcChannelField = c.channelId
+                                    scope.launch { s.setDiscordChannelId(c.channelId) }
+                                }
+                                .padding(vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+            if (dcChannel.isNotBlank()) {
+                Text("Pushing to channel id $dcChannel", style = MaterialTheme.typography.labelMedium, color = Accent)
+            }
+            dcTest?.let { (msg, ok) ->
+                Text(msg, style = MaterialTheme.typography.bodySmall, color = if (ok) Ok else Danger)
             }
         }
 

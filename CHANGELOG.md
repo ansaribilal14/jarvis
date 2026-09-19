@@ -3,6 +3,35 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [2.2.0] - Real-key-verified cloud AI, per-provider key vault, Discord notifications
+
+- **Every model slug in the provider presets is now verified LIVE before shipping.** The v1.9-era
+  presets had rotted: NVIDIA retired its whole `meta/llama-3.1/3.3` NIM family on 2026-08-26, so
+  "working" API-mode configs started failing with HTTP 410 - including the hardcoded fallback
+  model in the remote provider itself. v2.2 replaces everything with slugs that answered with real
+  content on 2026-09-20: NIM gets `openai/gpt-oss-20b` (3.3 s), `deepseek-ai/deepseek-v4-flash-0731`,
+  `z-ai/glm-5.3-flash`; OpenRouter gets five `:free` models (`deepseek/deepseek-v4-flash-0731:free`,
+  `inclusionai/ling-3.0-flash-vl:free`, `nex-agi/nex-n2.5-mini:free`, `nex-agi/nex-n2.5-pro:free`,
+  `poolside/laguna-s-2.1:free`, 0.4-2.4 s). Regression tests now pin the verified list and forbid
+  the dead slugs from returning (`CloudProvidersTest`).
+- **One encrypted key slot per provider** (`SecureVault.providerKey(id)`): saving an OpenRouter key
+  no longer clobbers your NIM key. Provider chips show a ✓ when a key is saved; the drawer shows the
+  saved key masked (`••••last4`) with a legacy-aware migration for the pre-2.2 single slot. Saving a
+  key makes that provider the ACTIVE one for the engine (shown as "ACTIVE" in the drawer).
+- **"Fetch live model list" button** in the API drawer: pulls `/models` from the provider at runtime,
+  filters OpenRouter to `:free`, and feeds the result into the model picker - presets can never
+  rot silently again.
+- **Provider catalog lifted to core** (`core/model/CloudProviders.kt`): 9 presets now - NVIDIA NIM,
+  OpenRouter, Novita, SambaNova, Groq, DeepSeek, Together, Ollama (LAN), Custom - with
+  provider-identification from the stored base URL shared by UI and tests.
+- **Discord notification channel (outbound)** (`core/remote/DiscordRemote.kt` + Settings card):
+  paste a bot token, tap "Fetch my channels" to list the text channels the bot can see, pick one,
+  "Save & send test" posts a real message. When enabled, finished/failed/stopped task outcomes are
+  pushed to that channel on every run. Honest scope: one-way (phone → Discord) - inbound commands
+  remain Telegram's job; the token lives in the encrypted vault.
+- **Fixed**: stale `nim_model` default (`meta/llama-3.1-8b-instruct`, 410) in settings, home-screen
+  status line and the remote fallback model - all now resolve to the verified `openai/gpt-oss-20b`.
+
 ## [2.1.0] - Built-in privileged setup (no other app) + live recording visualization + explicit record start
 
 - **Shizuku setup is now INSIDE the app - no second app needed.** JARVIS pairs with the phone's

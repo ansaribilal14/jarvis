@@ -41,6 +41,8 @@ class SettingsRepository(private val context: Context) {
         val TELEGRAM_REMOTE_ENABLED = booleanPreferencesKey("telegram_remote_enabled")
         val TELEGRAM_CHAT_ID = stringPreferencesKey("telegram_chat_id")
         val TELEGRAM_OFFSET = intPreferencesKey("telegram_offset")
+        val DISCORD_ENABLED = booleanPreferencesKey("discord_enabled")
+        val DISCORD_CHANNEL_ID = stringPreferencesKey("discord_channel_id")
     }
 
     private val d get() = context.dataStore.data
@@ -62,11 +64,13 @@ class SettingsRepository(private val context: Context) {
     val remoteBaseUrl: Flow<String> = d.map { it[Keys.REMOTE_BASE_URL] ?: "" }
     val remoteModel: Flow<String> = d.map { it[Keys.REMOTE_MODEL] ?: "" }
     val apiMode: Flow<Boolean> = d.map { it[Keys.API_MODE] ?: false }
-    val nimModel: Flow<String> = d.map { it[Keys.NIM_MODEL] ?: "meta/llama-3.1-8b-instruct" }
+    val nimModel: Flow<String> = d.map { it[Keys.NIM_MODEL] ?: com.jarvis.mobile.core.model.CloudProviders.NIM_MODELS.first() }
     val screenCompact: Flow<Boolean> = d.map { it[Keys.SCREEN_COMPACT] ?: true }
     val telegramRemoteEnabled: Flow<Boolean> = d.map { it[Keys.TELEGRAM_REMOTE_ENABLED] ?: false }
     val telegramChatId: Flow<String> = d.map { it[Keys.TELEGRAM_CHAT_ID] ?: "" }
     val telegramOffset: Flow<Int> = d.map { it[Keys.TELEGRAM_OFFSET] ?: 0 }
+    val discordEnabled: Flow<Boolean> = d.map { it[Keys.DISCORD_ENABLED] ?: false }
+    val discordChannelId: Flow<String> = d.map { it[Keys.DISCORD_CHANNEL_ID] ?: "" }
 
     suspend fun snapshot(): Snap = Snap(
         localOnly = localOnly.first(),
@@ -128,6 +132,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setTelegramRemoteEnabled(v: Boolean) = set(Keys.TELEGRAM_REMOTE_ENABLED, v)
     suspend fun setTelegramChatId(v: String) = set(Keys.TELEGRAM_CHAT_ID, v)
     suspend fun setTelegramOffset(v: Int) = set(Keys.TELEGRAM_OFFSET, v)
+    suspend fun setDiscordEnabled(v: Boolean) = set(Keys.DISCORD_ENABLED, v)
+    suspend fun setDiscordChannelId(v: String) = set(Keys.DISCORD_CHANNEL_ID, v)
 
     private suspend fun <T> set(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

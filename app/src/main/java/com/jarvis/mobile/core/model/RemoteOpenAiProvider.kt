@@ -55,7 +55,9 @@ class RemoteOpenAiProvider(
         try {
             val body = if (chat) {
                 JSONObject().apply {
-                    put("model", model.ifBlank { "meta/llama-3.1-8b-instruct" })
+                    // Verified-live fallback (NVIDIA retired the whole llama-3.1/3.3
+                    // NIM family on 2026-08-26 - old default failed with HTTP 410).
+                    put("model", model.ifBlank { CloudProviders.NIM_MODELS.first() })
                     put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt)))
                     put("max_tokens", maxTokens)
                     put("temperature", 0.25)

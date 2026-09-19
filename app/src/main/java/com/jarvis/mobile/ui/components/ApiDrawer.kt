@@ -16,12 +16,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,12 +35,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
+import com.jarvis.mobile.core.model.CloudProviderPreset
+import com.jarvis.mobile.core.model.CloudProviders
 import com.jarvis.mobile.ui.theme.Accent
 import com.jarvis.mobile.ui.theme.Danger
 import com.jarvis.mobile.ui.theme.Ok
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 /** Tiny app-wide bus so any screen can open the API-mode sidebar. */
 object ApiDrawerBus {
@@ -50,68 +58,24 @@ object ApiDrawerBus {
     }
 }
 
-/** Free-tier NVIDIA NIM models offered as one-tap picks in the sidebar. */
-private val NIM_MODELS = listOf(
-    "meta/llama-3.1-8b-instruct",
-    "meta/llama-3.3-70b-instruct",
-    "mistralai/mistral-nemo-12b-instruct",
-    "qwen/qwen2.5-7b-instruct",
-    "deepseek-ai/deepseek-r1-distill-llama-8b",
-)
-
-/** OpenRouter free-tier models (no card needed - MobileAgent-style free cloud brains). */
-private val OPENROUTER_MODELS = listOf(
-    "openai/gpt-oss-120b:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "deepseek/deepseek-chat-v3.1:free",
-    "qwen/qwen3-235b-a22b:free",
-    "google/gemma-3-27b-it:free",
-)
-
 /**
  * One OpenAI-compatible provider preset. JARVIS speaks the same protocol to
  * all of them (chat/completions) - the preset just fills the endpoint, model
  * picks and key hint so the user never has to know what a base URL is.
+ * Model slugs in the presets were verified live before shipping (v2.2.0);
+ * see CloudProviders for the verification discipline.
  */
-private data class ProviderPreset(
-    val id: String,
-    val label: String,
-    val baseUrl: String,
-    val keyHint: String,
-    val keyLabel: String,
-    val models: List<String>,
-    val note: String,
-)
-
-private val PROVIDERS = listOf(
-    ProviderPreset(
-        "nim", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "nvapi-…", "NVIDIA API key (nvapi-…)",
-        NIM_MODELS, "Get a free key at build.nvidia.com (Sign in → any model → Get API key).",
-    ),
-    ProviderPreset(
-        "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "sk-or-…", "OpenRouter key (sk-or-…)",
-        OPENROUTER_MODELS, "Free \":free\" models - create a key at openrouter.ai/keys (no card needed).",
-    ),
-    ProviderPreset(
-        "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "sk-…", "DeepSeek API key (sk-…)",
-        listOf("deepseek-chat", "deepseek-reasoner"), "Very cheap, very strong - key at platform.deepseek.com.",
-    ),
-    ProviderPreset(
-        "ollama", "Ollama (LAN)", "http://192.168.1.10:11434/v1", "ollama / blank", "Ollama key (usually blank)",
-        listOf("qwen2.5:7b", "llama3.2:3b", "qwen2.5-coder:7b", "mistral:7b"),
-        "Runs on your own PC - edit the endpoint below to http://<your-pc-ip>:11434/v1.",
-    ),
-    ProviderPreset(
-        "custom", "Custom", "", "any OpenAI-compatible key", "API key",
-        emptyList(), "Any OpenAI-compatible /v1/chat/completions endpoint.",
-    ),
-)
+private fun presets(): List<CloudProviderPreset> = CloudProviders.PRESETS
 
 /**
  * The API-mode sidebar: pick a provider, paste a key, pick a model, flip API
  * mode on - from then on every task runs against that provider automatically
  * (no local model activation, no further questions). Free OpenRouter models
  * are the recommended way to give small phones a big brain.
+ *
+ * v2.2: every provider gets its OWN key slot (encrypted), so switching
+ * providers no longer overwrites the previous key. Saving a key for a
+ * provider also makes that provider the ACTIVE one for the engine.
  */
 @Composable
 fun ApiDrawerSheet() {
@@ -119,17 +83,9 @@ fun ApiDrawerSheet() {
     val scope = rememberCoroutineScope()
     val apiMode by container.settings.apiMode.collectAsState(initial = false)
     val savedBaseUrl by container.settings.remoteBaseUrl.collectAsState(initial = "")
+    val PROVIDERS = remember { presets() }
     var selectedId by remember {
-        mutableStateOf(
-            when {
-                savedBaseUrl.isBlank() -> "nim"
-                savedBaseUrl.contains("openrouter.ai") -> "openrouter"
-                savedBaseUrl.contains("deepseek.com") -> "deepseek"
-                savedBaseUrl.contains("11434") -> "ollama"
-                savedBaseUrl == PROVIDERS[0].baseUrl -> "nim"
-                else -> "custom"
-            },
-        )
+        mutableStateOf(CloudProviders.guessId(savedBaseUrl) ?: "nim")
     }
     val provider = PROVIDERS.firstOrNull { it.id == selectedId } ?: PROVIDERS[0]
     var keyField by remember { mutableStateOf("") }
@@ -137,9 +93,24 @@ fun ApiDrawerSheet() {
     var urlField by remember { mutableStateOf(provider.baseUrl) }
     var testState by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var savedIds by remember { mutableStateOf(container.vault.providerKeyIds().toSet()) }
+    var fetchedModels by remember { mutableStateOf<List<String>?>(null) }
+    var fetchInfo by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var fetchBusy by remember { mutableStateOf(false) }
+
+    /** Saved key for the SELECTED provider, legacy-aware (pre-2.2 single slot). */
+    fun effectiveSavedKey(): String {
+        val direct = container.vault.providerKey(selectedId)
+        if (direct.isNotBlank()) return direct
+        val legacy = container.vault.remoteApiKey
+        if (legacy.isNotBlank() && CloudProviders.guessId(savedBaseUrl) == selectedId) return legacy
+        return ""
+    }
 
     var initialized by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(selectedId) {
+    LaunchedEffect(selectedId) {
+        fetchedModels = null
+        fetchInfo = null
         if (!initialized) {
             // First open: show the SAVED model/url so the user sees current state.
             initialized = true
@@ -154,10 +125,38 @@ fun ApiDrawerSheet() {
     }
 
     fun effectiveBaseUrl(): String =
-        if (provider.id == "custom") urlField.trim().trimEnd('/')
+        if (provider.id == "custom" || provider.baseUrl.isBlank()) urlField.trim().trimEnd('/')
         else provider.baseUrl
 
     fun effectiveModel(): String = modelField.trim().ifBlank { provider.models.firstOrNull() ?: "default" }
+
+    /** GET {base}/models with the provider key; returns model ids for the picker. */
+    suspend fun fetchLiveModels(): Result<List<String>> = withContext(Dispatchers.IO) {
+        val base = effectiveBaseUrl()
+        if (base.isBlank()) return@withContext Result.failure(IllegalStateException("Set the base URL first"))
+        val key = keyField.trim().ifBlank { effectiveSavedKey() }
+        try {
+            val conn = URL("$base/models").openConnection() as HttpURLConnection
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 20_000
+            if (key.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $key")
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code !in 200..299) {
+                return@withContext Result.failure(IllegalStateException("HTTP $code: ${text.take(120)}"))
+            }
+            val arr = JSONObject(text).optJSONArray("data")
+                ?: return@withContext Result.failure(IllegalStateException("Unexpected /models response shape"))
+            val ids = (0 until arr.length())
+                .mapNotNull { arr.optJSONObject(it)?.optString("id") }
+                .filter { it.isNotBlank() }
+            val list = if (provider.freeOnly) ids.filter { it.endsWith(":free") } else ids
+            Result.success(list.take(40))
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
 
     ModalDrawerSheet(drawerContentColor = MaterialTheme.colorScheme.background) {
         Column(
@@ -169,7 +168,7 @@ fun ApiDrawerSheet() {
             Text("API mode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Any OpenAI-compatible provider · key stays encrypted on this device",
+                "Any OpenAI-compatible provider · one encrypted key slot per provider",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -178,30 +177,44 @@ fun ApiDrawerSheet() {
             // ------------------------------------------------- provider chips
             Text("Provider", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PROVIDERS.take(3).forEach { p ->
-                    Chip(
-                        label = p.label,
-                        selected = p.id == selectedId,
-                        onClick = { selectedId = p.id; testState = null },
-                        modifier = Modifier.weight(1f),
-                    )
+            PROVIDERS.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                    row.forEach { p ->
+                        val marked = p.id in savedIds
+                        Chip(
+                            label = if (marked) "${p.label} ✓" else p.label,
+                            selected = p.id == selectedId,
+                            onClick = { selectedId = p.id; testState = null },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PROVIDERS.drop(3).forEach { p ->
-                    Chip(
-                        label = p.label,
-                        selected = p.id == selectedId,
-                        onClick = { selectedId = p.id; testState = null },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
 
-            if (provider.id == "custom") {
+            val savedKey = effectiveSavedKey()
+            val activeId = CloudProviders.guessId(savedBaseUrl)
+            if (activeId == selectedId && apiMode) {
+                Text(
+                    "ACTIVE - tasks currently run on this provider",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Accent,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            Text(
+                if (savedKey.isNotBlank()) {
+                    "Saved key ••••${savedKey.takeLast(4)} - paste below to replace it."
+                } else {
+                    "No key saved for ${provider.label} yet."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            if (provider.baseUrl.isBlank() && provider.id == "custom") {
                 OutlinedTextField(
                     value = urlField,
                     onValueChange = { urlField = it },
@@ -217,17 +230,22 @@ fun ApiDrawerSheet() {
                 value = keyField,
                 onValueChange = { keyField = it },
                 label = { Text(provider.keyLabel) },
-                placeholder = { Text("paste your key here") },
+                placeholder = { Text(if (savedKey.isBlank()) "paste your key here" else "paste a new key to replace") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
 
-            if (provider.models.isNotEmpty()) {
-                Text("Model", style = MaterialTheme.typography.titleSmall)
+            // ------------------------------------------------- model picker
+            val shownModels = fetchedModels ?: provider.models
+            if (shownModels.isNotEmpty()) {
+                Text(
+                    if (fetchedModels != null) "Live model list (fetched just now)" else "Model",
+                    style = MaterialTheme.typography.titleSmall,
+                )
                 Spacer(Modifier.height(8.dp))
-                provider.models.forEach { m ->
+                shownModels.forEach { m ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -250,6 +268,34 @@ fun ApiDrawerSheet() {
             Text(provider.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                enabled = !fetchBusy,
+                onClick = {
+                    fetchBusy = true
+                    scope.launch {
+                        val r = fetchLiveModels()
+                        r.fold(
+                            onSuccess = { list ->
+                                fetchedModels = list
+                                if (list.isEmpty()) {
+                                    fetchInfo = "Endpoint reachable but returned no models" to false
+                                } else {
+                                    fetchInfo = "${list.size} models fetched - tap one below" to true
+                                    if (modelField.isBlank()) modelField = list.first()
+                                }
+                            },
+                            onFailure = { fetchInfo = "Fetch failed: ${it.message?.take(90)}" to false },
+                        )
+                        fetchBusy = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (fetchBusy) "Fetching…" else "Fetch live model list") }
+            fetchInfo?.let { (msg, ok) ->
+                Text(msg, style = MaterialTheme.typography.bodySmall, color = if (ok) Ok else Danger)
+            }
+
+            Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
 
@@ -265,14 +311,17 @@ fun ApiDrawerSheet() {
                         scope.launch {
                             if (on) {
                                 // Turning ON persists everything the engine needs:
-                                // key, endpoint, model - then tasks just work.
-                                if (keyField.isNotBlank()) container.vault.remoteApiKey = keyField.trim()
+                                // active key, endpoint, model - then tasks just work.
+                                if (keyField.isNotBlank()) {
+                                    container.vault.setProviderKey(selectedId, keyField.trim())
+                                    container.vault.remoteApiKey = keyField.trim()
+                                }
                                 val base = effectiveBaseUrl()
                                 if (base.isNotBlank()) container.settings.setRemoteBaseUrl(base)
-                                val m = effectiveModel()
-                                container.settings.setRemoteModel(m)
-                                container.settings.setNimModel(m)
+                                container.settings.setRemoteModel(effectiveModel())
+                                container.settings.setNimModel(effectiveModel())
                                 container.settings.setLocalOnly(false)
+                                savedIds = container.vault.providerKeyIds().toSet()
                             }
                             container.settings.setApiMode(on)
                             testState = if (on) {
@@ -303,17 +352,21 @@ fun ApiDrawerSheet() {
                 onClick = {
                     busy = true
                     scope.launch {
-                        if (keyField.isNotBlank()) container.vault.remoteApiKey = keyField.trim()
+                        if (keyField.isNotBlank()) {
+                            // Per-provider slot AND the active slot the engine reads.
+                            container.vault.setProviderKey(selectedId, keyField.trim())
+                            container.vault.remoteApiKey = keyField.trim()
+                        }
                         val base = effectiveBaseUrl()
                         if (base.isNotBlank()) container.settings.setRemoteBaseUrl(base)
-                        val m = effectiveModel()
-                        container.settings.setRemoteModel(m)
-                        container.settings.setNimModel(m)
+                        container.settings.setRemoteModel(effectiveModel())
+                        container.settings.setNimModel(effectiveModel())
                         val r = container.remoteProvider.verifyKey()
                         testState = r.fold(
                             onSuccess = { "Key works - model replied: ${it.take(40)}" to true },
                             onFailure = { "Key test failed: ${it.message?.take(90)}" to false },
                         )
+                        savedIds = container.vault.providerKeyIds().toSet()
                         busy = false
                     }
                 },
@@ -330,6 +383,7 @@ fun ApiDrawerSheet() {
             Spacer(Modifier.height(12.dp))
             Text(
                 "Requests go directly from this phone to the provider - nothing is proxied. " +
+                    "Each provider keeps its own key (encrypted); the last one you save is the one that runs. " +
                     "Turn API mode off anytime to return fully on-device.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

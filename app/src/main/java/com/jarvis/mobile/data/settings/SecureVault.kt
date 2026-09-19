@@ -6,8 +6,10 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * Hardware-backed (Android Keystore via EncryptedSharedPreferences) storage for
- * the single secret this app may hold: an optional remote provider API key.
+ * Hardware-backed (Android Keystore via EncryptedSharedPreferences) storage
+ * for the secrets this app may hold: one API key per cloud provider (of which
+ * exactly one is "active" for the engine - see remoteApiKey), plus the bot
+ * tokens for the Telegram / Discord channels.
  * Never used for user passwords / OTPs (see PasswordPolicy).
  */
 class SecureVault(context: Context) {
@@ -25,9 +27,30 @@ class SecureVault(context: Context) {
         )
     }
 
+    /** The ACTIVE provider key the engine actually sends (kept for compatibility). */
     var remoteApiKey: String
         get() = prefs.getString(KEY_REMOTE_API_KEY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_REMOTE_API_KEY, value).apply()
+
+    /** Per-provider key storage so switching providers never loses a saved key. */
+    fun providerKey(providerId: String): String =
+        prefs.getString(KEY_PROVIDER_PREFIX + providerId, "") ?: ""
+
+    fun setProviderKey(providerId: String, value: String) {
+        prefs.edit().putString(KEY_PROVIDER_PREFIX + providerId, value).apply()
+    }
+
+    /** Ids of providers that have a stored key (for UI "saved" markers). */
+    fun providerKeyIds(): List<String> =
+        prefs.all.keys.filter { it.startsWith(KEY_PROVIDER_PREFIX) }
+            .map { it.removePrefix(KEY_PROVIDER_PREFIX) }
+            .filter { (prefs.getString(KEY_PROVIDER_PREFIX + it, "") ?: "").isNotBlank() }
+            .sorted()
+
+    /** Discord bot token for the outbound notification channel (kept encrypted). */
+    var discordBotToken: String
+        get() = prefs.getString(KEY_DISCORD_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_DISCORD_TOKEN, value).apply()
 
     /** Telegram bot token for the optional remote-control channel (kept encrypted). */
     var telegramBotToken: String
@@ -37,5 +60,7 @@ class SecureVault(context: Context) {
     companion object {
         private const val KEY_REMOTE_API_KEY = "remote_api_key"
         private const val KEY_TELEGRAM_TOKEN = "telegram_bot_token"
+        private const val KEY_DISCORD_TOKEN = "discord_bot_token"
+        private const val KEY_PROVIDER_PREFIX = "provider_key_"
     }
 }

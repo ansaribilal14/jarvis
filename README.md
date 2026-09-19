@@ -33,6 +33,19 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
 setup uses Wireless debugging, which exists on Android 11+; on Android 10 the external Shizuku
 app remains the precision path.
 
+## What's new in v2.2.0
+
+- **Cloud AI that actually works - verified with real keys.** Every model in the provider presets
+  was tested against the live chat endpoint before this release (NVIDIA had silently retired the
+  old presets' models - they answered HTTP 410). New verified defaults: `openai/gpt-oss-20b` on
+  NIM, five fresh `:free` models on OpenRouter, and a **"Fetch live model list"** button so the
+  picker always reflects what the provider serves today.
+- **One key per provider, all encrypted.** The API drawer now keeps a separate key slot for NVIDIA
+  NIM, OpenRouter, Novita, SambaNova, Groq, DeepSeek, Together, LAN Ollama and custom endpoints -
+  switch providers without losing keys; the last key you save is the one that runs (marked ACTIVE).
+- **Discord notifications.** Paste a bot token in Settings → "Discord notifications", pick a channel
+  from the fetched list, send a test message - and every task outcome can land in your server.
+
 ## What's new in v2.1.0
 
 - **Built-in Shizuku-grade setup - no second app.** The Skills screen now pairs JARVIS with the

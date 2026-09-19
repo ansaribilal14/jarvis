@@ -85,7 +85,7 @@ fun HomeScreen(openTab: (String) -> Unit) {
     val speech = remember { SpeechInput(context) }
     val voiceEnabled by container.settings.voiceInput.collectAsState(initial = true)
     val apiMode by container.settings.apiMode.collectAsState(initial = false)
-    val nimModel by container.settings.nimModel.collectAsState(initial = "meta/llama-3.1-8b-instruct")
+    val nimModel by container.settings.nimModel.collectAsState(initial = com.jarvis.mobile.core.model.CloudProviders.NIM_MODELS.first())
 
     LaunchedEffect(Unit) {
         speech.events.collectLatest { ev ->

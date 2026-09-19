@@ -23,6 +23,7 @@ real device, run the TESTING.md scenario list.
 ## Version history (shipped)
 | version | code | theme |
 |---|---|---|
+| v2.2.0 | 17 | real-key-verified cloud presets (NIM llama-3.x family 410'd; gpt-oss-20b + 5 OpenRouter free models verified live), per-provider encrypted key slots + legacy migration, fetch-live-model-list button, provider catalog in core, Discord outbound notification channel (token+channel+test+push), CloudProvidersTest |
 | v2.1.0 | 16 | built-in privileged setup (in-app wireless-debugging pairing + own shell server, no second app), live ink visualization of taps/drags, record-start picker (home/app) with instruction card |
 | v2.0.0 | 15 | overhaul: Shizuku getevent precision capture + REC bubble console, trigger engine (app/time/notification/battery), M3 Expressive theme, new logo, skill trigger editor |
 | v1.10.0 | 14 | recorder fixed: precision touch capture via TouchInteractionController + fused event/raw layers, honest capture-status UI (v1.9 motionEventSources mechanism removed - it consumes touches and suppressed the fallback) |
