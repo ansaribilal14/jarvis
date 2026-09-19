@@ -26,7 +26,7 @@ class SelfSignedCertBuilderTest {
     fun `certificate parses through standard CertificateFactory`() {
         val cert = SelfSignedCertBuilder.build(newPair(), "CN=jarvis")
         val reparsed = CertificateFactory.getInstance("X.509")
-            .generateCertificate(ByteArrayInputStream(cert.encoded))
+            .generateCertificate(ByteArrayInputStream(cert.encoded)) as java.security.cert.X509Certificate
         assertEquals(cert.subjectX500Principal, reparsed.subjectX500Principal)
         assertEquals("CN=jarvis", cert.subjectX500Principal.name)
     }
