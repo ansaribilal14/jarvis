@@ -28,7 +28,7 @@ class JarvisShellUserService() : IJarvisShellService.Stub() {
     @Keep
     constructor(@Suppress("UNUSED_PARAMETER") context: Context) : this()
 
-    private val streams = CopyOnWriteArrayList<Process>()
+    private val streams = CopyOnWriteArrayList<java.lang.Process>()
     private val tornDown = AtomicBoolean(false)
 
     override fun exec(command: Array<out String>?, timeoutMillis: Long, maxOutputBytes: Int): Bundle {
@@ -72,10 +72,15 @@ class JarvisShellUserService() : IJarvisShellService.Stub() {
     override fun stream(command: Array<out String>?, sink: ParcelFileDescriptor?) {
         if (tornDown.get() || command.isNullOrEmpty() || sink == null) return
         try {
-            val process = ProcessBuilder(*command)
-                .directory(File("/"))
-                .redirectErrorStream(true)
-                .start()
+            val process = try {
+                ProcessBuilder(*command)
+                    .directory(File("/"))
+                    .redirectErrorStream(true)
+                    .start()
+            } catch (_: Exception) {
+                runCatching { sink.close() }
+                return
+            }
             streams.add(process)
             thread(isDaemon = true, name = "jarvis-shell-stream") {
                 ParcelFileDescriptor.AutoCloseOutputStream(sink).use { out ->
@@ -97,7 +102,7 @@ class JarvisShellUserService() : IJarvisShellService.Stub() {
 
     override fun destroy() {
         if (!tornDown.compareAndSet(false, true)) return
-        streams.forEach { runCatching { it.destroy() } }
+        streams.forEach { runCatching { (it as? java.lang.Process)?.destroy() } }
         streams.clear()
         kotlin.system.exitProcess(0)
     }
