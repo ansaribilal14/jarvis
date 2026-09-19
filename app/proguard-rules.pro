@@ -37,3 +37,18 @@
 
 # llama.cpp native allocations: never strip Gson-like access (none used), keep exceptions
 -keepattributes Exceptions
+
+# ----------------------------------------------------------------------------
+# v2.1: built-in (in-app) privileged shell
+# SelfHostServer is launched via `app_process ... com.jarvis.mobile.core.adb.SelfHostServer`
+# from the installed APK - the class name and main() must survive R8 verbatim.
+-keep class com.jarvis.mobile.core.adb.SelfHostServer {
+    public static void main(java.lang.String[]);
+    public static final int EXIT_MARKER;
+    public static void writeArgv(java.io.DataOutputStream, java.lang.String[]);
+}
+# JNI entry points resolve by name - never rename or strip.
+-keep class com.jarvis.mobile.core.adb.Spake2 { *; }
+-keepclasseswithmembernames class * { native <methods>; }
+# vvb2060 boringssl prefab: native only, but keep any residual reflection safe
+-dontwarn io.github.vvb2060.ndk.**

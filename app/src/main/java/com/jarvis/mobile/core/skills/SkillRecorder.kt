@@ -196,12 +196,18 @@ object SkillRecorder {
     }
 
     /** Called by the touch-stream recorder when precision capture is delivering events. */
-    fun setPrecision(on: Boolean) {
+    fun setPrecision(on: Boolean, layer: String? = null) {
         synchronized(stateLock) {
             if (_state.value.precisionActive != on) {
                 _state.value = _state.value.copy(
                     precisionActive = on,
-                    captureLayer = if (on) "PRECISION+EVENTS" else "EVENTS",
+                    captureLayer = if (on) {
+                        when (layer) {
+                            "built_in" -> "PRECISION (built-in shell)+EVENTS"
+                            "shizuku" -> "PRECISION (Shizuku)+EVENTS"
+                            else -> "PRECISION+EVENTS"
+                        }
+                    } else "EVENTS",
                 )
                 Logx.i(TAG, if (on) "Precision touch capture ACTIVE - every tap is recorded"
                              else "Precision touch capture unavailable - app-event capture only")

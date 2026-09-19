@@ -29,7 +29,22 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
    enable Accessibility → start using it.
 
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
-(~21 MB); model files are downloaded separately inside the app.
+(~21 MB); model files are downloaded separately inside the app. The built-in precision-capture
+setup uses Wireless debugging, which exists on Android 11+; on Android 10 the external Shizuku
+app remains the precision path.
+
+## What's new in v2.1.0
+
+- **Built-in Shizuku-grade setup - no second app.** The Skills screen now pairs JARVIS with the
+  phone's own Wireless debugging (one 6-digit code, ports auto-found) and starts JARVIS's own
+  privileged shell from inside the app. Recordings get tap-by-tap precision everywhere without
+  installing anything else; the external Shizuku app remains an optional alternative.
+- **You SEE what is being recorded.** While recording, every tap and drag is drawn on screen as
+  red ink - a glowing fingertip dot, trails for drags, bursts for taps - over any app, without
+  ever intercepting a touch.
+- **Recordings start where you choose.** "Record a skill" asks first: start from the home screen
+  or jump into any app from a dropdown. JARVIS navigates, shows a short "everything is recording"
+  reminder, then follows your taps with live ink until you stop it from the REC bubble.
 
 ## What's new in v2.0.0
 

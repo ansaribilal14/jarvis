@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
+import com.jarvis.mobile.core.adb.SelfHostShell
 import com.jarvis.mobile.core.agent.AgentEngine
 import com.jarvis.mobile.core.shizuku.ShizukuBridge
 import com.jarvis.mobile.core.skills.SkillDefinition
@@ -40,9 +41,21 @@ fun SkillsScreen(openTab: (String) -> Unit) {
     val rec by SkillRecorder.state.collectAsState()
     val agentState by AgentEngine.state.collectAsState()
     val shizuku by ShizukuBridge.state.collectAsState()
+    val selfhost by SelfHostShell.state.collectAsState()
     var skills by remember { mutableStateOf(SkillStore.list(context)) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var triggerLog by remember { mutableStateOf(TriggerEngine.recentLog) }
+    var showRecordStart by remember { mutableStateOf(false) }
+    var showSelfHostSetup by remember { mutableStateOf(false) }
+    var showShizukuRow by remember { mutableStateOf(false) }
+
+    // HomeScreen's "Record a skill" chip lands here with the dialog open.
+    LaunchedEffect(RecordStartBus.openRecordStart.value) {
+        if (RecordStartBus.openRecordStart.value) {
+            RecordStartBus.openRecordStart.value = false
+            showRecordStart = true
+        }
+    }
 
     fun refresh() {
         skills = SkillStore.list(context)
@@ -93,8 +106,8 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                         // guess whether anything is being recorded.
                         Text(
                             when {
-                                rec.precisionActive -> "PRECISION capture live - every tap in every app is recorded (${rec.rawTaps} raw touches seen)"
-                                else -> "App-event capture - buttons, typing, scrolls, app switches. Install Shizuku below for tap-by-tap precision (even in apps that hide from accessibility)."
+                                rec.precisionActive -> "${rec.captureLayer} - every tap in every app is recorded (${rec.rawTaps} raw touches seen), drawn as live ink"
+                                else -> "App-event capture - buttons, typing, scrolls, app switches. Set up the built-in precision shell below for tap-by-tap capture (even in apps that hide from accessibility)."
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = if (rec.precisionActive) Accent else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -164,14 +177,12 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                             )
                         }
                         Button(
-                            onClick = { SkillRecorder.start() },
+                            onClick = { showRecordStart = true },
                             enabled = AgentEngine.isRunning().not(),
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Start recording") }
+                        ) { Text("Record a skill") }
                         Text(
-                            "A red REC bubble floats over every app with a live step counter - you always see capture working. " +
-                                "Use your phone normally: taps, long-presses, typing, swipes and app switches are all recorded " +
-                                "with real screen coordinates. Come back and tap Stop when done.",
+                            "You choose where to start: the home screen or any app. A red REC bubble floats over everything with a live step counter, and every tap and drag you make is drawn on screen as red ink - you always SEE what is being recorded. Come back and tap Stop when done.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -181,9 +192,13 @@ fun SkillsScreen(openTab: (String) -> Unit) {
         }
 
         // ------------------------------------------------- precision setup row
-        if (shizuku.status == ShizukuBridge.Status.READY) {
+        if (selfhost.status == SelfHostShell.Status.READY || shizuku.status == ShizukuBridge.Status.READY) {
             Text(
-                "Shizuku connected - precision touch capture is available on this device.",
+                when {
+                    selfhost.status == SelfHostShell.Status.READY ->
+                        "Built-in precision shell ready - every tap records with exact coordinates. No other app involved."
+                    else -> "Shizuku connected - precision touch capture is available on this device."
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = com.jarvis.mobile.ui.theme.Ok,
             )
@@ -194,46 +209,74 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Want EVERY tap recorded - even in games and canvas apps?", style = MaterialTheme.typography.titleSmall)
+                    Text("Record EVERY tap - even in games and canvas apps", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "Install Shizuku (free, open-source), start it once, then tap Connect. JARVIS then watches the " +
-                            "raw touchscreen stream and records exact coordinates of every contact, in every app, " +
-                            "without changing how your phone feels.",
+                        "One-time setup: JARVIS pairs with this phone's own Wireless debugging and starts its own privileged " +
+                            "shell from inside the app - nothing else to install. Afterwards, the raw touchscreen stream is " +
+                            "recorded with exact coordinates and every tap/drag is drawn on screen while you record.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                runCatching {
-                                    val i = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-                                    if (i != null) context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                                    else context.startActivity(
-                                        android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/"))
-                                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                                    )
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                        ) { Text(if (shizuku.status == ShizukuBridge.Status.NOT_INSTALLED) "Get Shizuku" else "Open Shizuku") }
-                        OutlinedButton(
-                            onClick = {
-                                ShizukuBridge.refresh()
-                                ShizukuBridge.requestPermission()
-                            },
-                            enabled = shizuku.status == ShizukuBridge.Status.NOT_AUTHORIZED || shizuku.status == ShizukuBridge.Status.READY,
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Connect") }
+                    when (selfhost.status) {
+                        SelfHostShell.Status.PAIRED -> Text(
+                            "Paired - tap Connect to start the built-in shell.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SelfHostShell.Status.CONNECTING -> Text(
+                            "Connecting: ${selfhost.reason}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SelfHostShell.Status.ERROR -> Text(
+                            selfhost.reason,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Danger,
+                        )
+                        else -> Unit
                     }
-                    Text(
-                        when (shizuku.status) {
-                            ShizukuBridge.Status.NOT_RUNNING -> "Shizuku status: not running - start it in the Shizuku app (wireless debugging or adb)."
-                            ShizukuBridge.Status.NOT_AUTHORIZED -> "Shizuku status: running - tap Connect to grant JARVIS access."
-                            else -> "Shizuku status: not installed."
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Button(onClick = { showSelfHostSetup = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            when (selfhost.status) {
+                                SelfHostShell.Status.PAIRED -> "Connect built-in shell"
+                                else -> "Set up (built-in, no other app)"
+                            },
+                        )
+                    }
+                    androidx.compose.material3.TextButton(
+                        onClick = { showShizukuRow = !showShizukuRow },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (showShizukuRow) "Hide the Shizuku app option" else "Prefer the Shizuku app instead?",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    if (showShizukuRow) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        val i = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                                        if (i != null) context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                                        else context.startActivity(
+                                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/"))
+                                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text(if (shizuku.status == ShizukuBridge.Status.NOT_INSTALLED) "Get Shizuku" else "Open Shizuku") }
+                            OutlinedButton(
+                                onClick = {
+                                    ShizukuBridge.refresh()
+                                    ShizukuBridge.requestPermission()
+                                },
+                                enabled = shizuku.status == ShizukuBridge.Status.NOT_AUTHORIZED || shizuku.status == ShizukuBridge.Status.READY,
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Connect") }
+                        }
+                    }
                 }
             }
         }
@@ -329,6 +372,17 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                 androidx.compose.material3.TextButton(onClick = { confirmDelete = null }) { Text("Keep") }
             },
         )
+    }
+
+    if (showRecordStart) {
+        RecordStartDialog(
+            onDismiss = { showRecordStart = false },
+            onStarted = { showRecordStart = false },
+        )
+    }
+
+    if (showSelfHostSetup) {
+        SelfHostSetupDialog(onDismiss = { showSelfHostSetup = false })
     }
 }
 

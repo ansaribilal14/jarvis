@@ -3,6 +3,47 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [2.1.0] - Built-in privileged setup (no other app) + live recording visualization + explicit record start
+
+- **Shizuku setup is now INSIDE the app - no second app needed.** JARVIS pairs with the phone's
+  OWN Wireless debugging (Android 11+) from within the Skills screen and starts its own
+  shell-identity server (`core/adb/SelfHostServer`) via `app_process` - running as uid 2000,
+  the same identity the Shizuku server uses, but launched by JARVIS itself through an in-app
+  ADB connection:
+  - `AdbKeyStore`: per-install RSA-2048 keypair + hand-rolled DER self-signed X509 (no
+    BouncyCastle), persisted app-privately; the Android public-key line rides the pairing
+    PeerInfo, so adbd permanently trusts JARVIS after one pairing.
+  - `AdbPairing`: the AOSP pairing handshake - TLS keying material export ("adb-label"),
+    SPAKE2 over the 6-digit pairing code (BoringSSL via the `io.github.vvb2060.ndk:boringssl`
+    prefab, JNI in `spake2_jni.cpp`), AES-128-GCM PeerInfo exchange. Adapted from
+    wuyr/jdwp-injector-for-android (Apache-2.0).
+  - `AdbClient`: CNXN -> STLS -> TLS 1.3 with the generated client identity, `exec:` services
+    for one-shot commands (adapted from wuyr, Apache-2.0).
+  - `SelfHostShell`: mDNS (NSD) auto-discovery of both wireless-debugging ports (user types
+    only the pairing code, manual port fallback included), server lifecycle (kill stale ->
+    start with a random memory-only token -> token handshake over 127.0.0.1), exec/stream
+    data plane. The token is never persisted; the socket is loopback-only.
+  - The external Shizuku app stays as an opt-in alternative (collapsed row) - both transports
+    feed the same `PrivilegedShell` facade (`core/shizuku/PrivShell.kt`), so the recorder never
+    depends on a concrete one.
+- **Recording visualization ("show the touches and drag")**: the same decoded touch stream now
+  drives a live ink overlay (`service/RecordingInk.kt`) - a glowing fingertip dot, red ink
+  trails for every drag, burst-and-fade for every tap, drawn edge-to-edge over any app while
+  recording. The overlay is NOT_TOUCHABLE (passthrough, zero interference) and only renders
+  what the precision stream sees. `TouchStreamAnalyzer` gained `Move` primitives (6px
+  emission threshold, re-armed per contact, first-finger only) with unit tests.
+- **Explicit record start**: "Record a skill" now asks WHERE to start - Home screen or any
+  launchable app from a dropdown (`RecordStartDialog`). On Start: recorder arms first, JARVIS
+  navigates home / launches the app, and an auto-fading instruction card ("Recording
+  everything - every tap and swipe is recorded and drawn as red ink") explains the state.
+  HomeScreen's recorder chip routes through the same dialog.
+- **Honest status everywhere**: the REC bubble and Skills screen now say WHICH transport is
+  live ("PRECISION (built-in shell)" vs "PRECISION (Shizuku)") and the ink visualization is
+  mentioned in the recording status.
+- **Tests**: Move-primitive emission (threshold, re-arm, second-finger silence) and the
+  self-signed certificate builder (parses through CertificateFactory, signature verifies,
+  v3 + long validity, PKCS8 round-trip).
+
 ## [2.0.0] - The overhaul: root-free Tasker-grade recording, trigger engine, floating console, Material 3 Expressive
 
 *Research base: OpenTasker, Easer, AutoX (3 forks), argus and the MobileAgent demo were cloned and

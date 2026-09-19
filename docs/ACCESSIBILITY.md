@@ -48,14 +48,19 @@ ML Kit on-device recognizer when the a11y tree is empty/sparse. Images never lea
   was observed, else UNVERIFIED.
 - Text entry verifies by re-reading the field.
 
-## Precision touch capture (v2.0)
+## Precision touch capture (v2.0, built-in since v2.1)
 
 v1.9 used `AccessibilityServiceInfo.motionEventSources` (consumes the user's touches) and v1.10
 used a `TouchInteractionController` gated on `FLAG_REQUEST_TOUCH_EXPLORATION_MODE` (depends on
 touch-exploration semantics most ROMs do not deliver). Both are removed in v2.0.
 
-The precision layer now reads the raw kernel touchscreen stream (`getevent -t`) through Shizuku -
-the same technique AutoX implements with root, root-free via the shell identity. Consequences:
+The precision layer reads the raw kernel touchscreen stream (`getevent -t`) under the shell
+identity - the same technique AutoX implements with root, root-free. Since v2.1 the shell
+server is BUILT INTO the app (`core/adb/SelfHostServer`): JARVIS pairs with the phone's own
+Wireless debugging once (the AOSP SPAKE2+ pairing handshake, in-app) and then launches its own
+`app_process` shell server as uid 2000 - no second app needed. The external Shizuku app
+remains an optional alternative transport; both feed the same `PrivilegedShell` facade.
+Consequences:
 
 - Works on every supported Android version, in every app, including games and canvas views that
   never emit accessibility events.
@@ -67,3 +72,12 @@ the same technique AutoX implements with root, root-free via the shell identity.
 - The a11y event layer (TYPE_VIEW_CLICKED/LONG_CLICKED/TEXT_CHANGED/SCROLLED/WINDOW_STATE_CHANGED)
   stays on as a fallback that no flag can silence, and `RawTapMerger` fuses both layers into
   semantic steps with real coordinates.
+
+### Live recording visualization (v2.1)
+
+While a recording is active, the same decoded touch stream drives a passthrough overlay
+(`service/RecordingInk.kt`): every fingertip contact is drawn as a glowing red dot, drags leave
+fading ink trails, taps burst and fade. The overlay window is `NOT_TOUCHABLE` - it renders
+purely from observation and can never intercept, block or delay a touch. When the precision
+stream is off (no privileged shell), no ink is drawn and the UI says so honestly instead of
+faking feedback.

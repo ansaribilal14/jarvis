@@ -29,6 +29,16 @@ Used to read the raw touchscreen stream (`getevent -t`) under the shell identity
 the technique AutoX implements with root. Manifest provider + API permission declared; no Shizuku
 code is copied - consumed as Maven artifacts.
 
+## Built-in privileged shell (v2.1 - the no-other-app Shizuku replacement)
+| Component | License | Source |
+|---|---|---|
+| io.github.vvb2060.ndk:boringssl (prefab, native only) | Apache-2.0 / OpenSSL-style | github.com/vvb2060/boringssl-android |
+| ADB pairing / protocol client adaptation | Apache-2.0 | github.com/wuyr/jdwp-injector-for-android (AdbClient.kt, AdbWirelessPairing.kt, AdbWirelessPortResolver.kt - adapted, keys/certs replaced with per-install generated identity) |
+The AOSP wireless-debugging pairing protocol implementation (SPAKE2 + HKDF + AES-GCM PeerInfo,
+TLS 1.3 adbd connection) is adapted from the wuyr project under Apache-2.0; the hardcoded demo
+keypair/certificate were replaced by a per-install generated RSA identity (see
+`core/adb/AdbKeyStore.kt`). SPAKE2/HKDF primitives come from BoringSSL via the vvb2060 prefab.
+
 ## Design references studied (no code copied)
 Google ARTEMIS, awesome-local-ai-android, shadergradient, liquid-logo,
 liquid-glass-js, react-three-fiber - used as architecture/design inspiration only.

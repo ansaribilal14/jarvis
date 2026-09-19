@@ -332,7 +332,7 @@ fun HomeScreen(openTab: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     onClick = {
                         if (!com.jarvis.mobile.core.skills.SkillRecorder.state.value.active) {
-                            SkillRecorder.start()
+                            com.jarvis.mobile.ui.screens.RecordStartBus.openRecordStart.value = true
                         }
                         openTab("skills")
                     },

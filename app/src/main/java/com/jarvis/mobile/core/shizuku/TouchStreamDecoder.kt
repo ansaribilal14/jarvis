@@ -30,11 +30,15 @@ object TouchStreamDecoder {
     const val ABS_MT_POSITION_X = 0x35
     const val ABS_MT_POSITION_Y = 0x36
 
+    /** Minimum travel (px) between two emitted Move primitives (ink overlay). */
+    const val MOVE_EMIT_PX = 6
+
     /** One parsed input line: `type code value` triple. */
     data class Event(val type: Int, val code: Int, val value: Long)
 
     sealed interface TouchEvent {
         data class Down(val x: Int, val y: Int) : TouchEvent
+        data class Move(val x: Int, val y: Int) : TouchEvent
         data class Up(val x: Int, val y: Int, val durationMs: Long, val movedPx: Int) : TouchEvent
     }
 
@@ -130,6 +134,10 @@ class TouchStreamAnalyzer(
     private var downX = 0
     private var downY = 0
 
+    // Last emitted Move (drag visualization); re-arms on every new contact.
+    private var lastEmitX = 0
+    private var lastEmitY = 0
+
     /** Feed one line; returns touch primitives the recorder should act on. */
     fun onLine(line: String, nowMs: Long): List<TouchStreamDecoder.TouchEvent> {
         val ev = TouchStreamDecoder.parseLine(line) ?: return emptyList()
@@ -145,8 +153,14 @@ class TouchStreamAnalyzer(
                         maybeContactEnd(activeSlot, nowMs, out)
                     }
                 }
-                TouchStreamDecoder.ABS_MT_POSITION_X -> slotX[activeSlot] = scaleX(ev.value)
-                TouchStreamDecoder.ABS_MT_POSITION_Y -> slotY[activeSlot] = scaleY(ev.value)
+                TouchStreamDecoder.ABS_MT_POSITION_X -> {
+                    slotX[activeSlot] = scaleX(ev.value)
+                    maybeMove(activeSlot, out)
+                }
+                TouchStreamDecoder.ABS_MT_POSITION_Y -> {
+                    slotY[activeSlot] = scaleY(ev.value)
+                    maybeMove(activeSlot, out)
+                }
             }
             TouchStreamDecoder.EV_KEY -> when (ev.code) {
                 TouchStreamDecoder.BTN_TOUCH -> {
@@ -186,7 +200,26 @@ class TouchStreamAnalyzer(
         primarySlot = slot
         downAt = nowMs
         downX = x; downY = y
+        lastEmitX = x; lastEmitY = y
         out.add(TouchStreamDecoder.TouchEvent.Down(x, y))
+    }
+
+    /**
+     * Live drag feedback: while the PRIMARY contact moves far enough, emit a
+     * Move primitive (consumed by the on-screen ink overlay and ignored by
+     * step classification, which works from Down/Up geometry).
+     */
+    private fun maybeMove(slot: Int, out: MutableList<TouchStreamDecoder.TouchEvent>) {
+        if (slot != primarySlot) return
+        val x = slotX[slot] ?: return
+        val y = slotY[slot] ?: return
+        val dx = x - lastEmitX
+        val dy = y - lastEmitY
+        if (maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) >= MOVE_EMIT_PX) {
+            lastEmitX = x
+            lastEmitY = y
+            out.add(TouchStreamDecoder.TouchEvent.Move(x, y))
+        }
     }
 
     private fun maybeContactEnd(slot: Int, nowMs: Long, out: MutableList<TouchStreamDecoder.TouchEvent>) {

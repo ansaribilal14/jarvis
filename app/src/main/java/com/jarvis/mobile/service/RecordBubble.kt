@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -150,11 +149,9 @@ object RecordBubble {
 
     private fun statusText(st: SkillRecorder.RecordingState): String = when {
         st.precisionActive ->
-            "Precision touch capture LIVE - every tap in every app is recorded (${st.rawTaps} raw touches seen)."
-        Build.VERSION.SDK_INT >= 34 ->
-            "App-event capture - buttons, typing, scrolls, app switches. For raw-tap precision in any app (even games), install Shizuku - see the Skills screen."
+            "Precision touch capture LIVE - every tap in every app is recorded (${st.rawTaps} raw touches seen). Every tap and drag is drawn on screen."
         else ->
-            "App-event capture - buttons, typing, scrolls, app switches. For raw-tap precision install Shizuku (Skills screen)."
+            "App-event capture - buttons, typing, scrolls, app switches. For raw-tap precision + ink visualization, set up the built-in shell (Skills screen) - no other app needed."
     }
 
     private fun toggleExpand(context: Context) {

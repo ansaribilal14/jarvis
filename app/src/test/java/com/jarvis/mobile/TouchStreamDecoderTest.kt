@@ -186,4 +186,72 @@ class TouchStreamDecoderTest {
         val up = out.filterIsInstance<TouchStreamDecoder.TouchEvent.Up>().first()
         assertTrue(up.movedPx > 400)
     }
+
+    // ------------------------------------------- live drag visualization (v2.1)
+
+    @Test
+    fun `primary contact movement emits Move primitives`() {
+        val d = decoder()
+        val down = listOf(
+            "0003 002f 00000000",
+            "0003 0039 00000001",
+            "0003 0035 000002d0", // x 720
+            "0003 0036 000004b0", // y 1200
+            "0001 014a 00000001",
+        ).flatMap { d.onLine(it, 1L) }
+        assertEquals(1, down.size) // exactly the Down
+
+        // tiny jitter (2px): below the 6px threshold -> no Move
+        val jitter = d.onLine("0003 0035 000002d2", 2L) // x 722
+        assertTrue(jitter.isEmpty())
+
+        // real drag: x 720->300, y 1200->1180 -> Moves carrying the new position
+        val moves = d.onLine("0003 0035 0000012c", 3L) + d.onLine("0003 0036 0000049c", 3L) // x 300, y 1180
+        assertTrue(moves.isNotEmpty())
+        val move = moves.filterIsInstance<TouchStreamDecoder.TouchEvent.Move>().last()
+        assertEquals(300, move.x)
+        assertEquals(1180, move.y)
+    }
+
+    @Test
+    fun `move re-arms on every new contact`() {
+        val d = decoder()
+        // contact 1: down + drag + lift
+        listOf(
+            "0003 002f 00000000",
+            "0003 0039 00000001",
+            "0003 0035 00000190", // x 400
+            "0003 0036 00000190", // y 400
+            "0001 014a 00000001",
+            "0003 0035 000000fa", // x 250
+            "0003 0039 ffffffff",
+            "0001 014a 00000000",
+        ).forEach { d.onLine(it, 1L) }
+        // contact 2: down at the same point - Move state must have reset, no stale emits
+        val second = listOf(
+            "0003 0039 00000002",
+            "0003 0035 00000190",
+            "0003 0036 00000190",
+            "0001 014a 00000001",
+        ).flatMap { d.onLine(it, 50L) }
+        assertTrue(second.none { it is TouchStreamDecoder.TouchEvent.Move })
+        assertEquals(1, second.size)
+    }
+
+    @Test
+    fun `second-finger movement emits nothing`() {
+        val d = decoder()
+        // primary finger down (slot 0)
+        listOf(
+            "0003 002f 00000000",
+            "0003 0039 00000001",
+            "0003 0035 00000064",
+            "0003 0036 000000c8",
+            "0001 014a 00000001",
+        ).forEach { d.onLine(it, 1L) }
+        // second finger (slot 1) moves
+        d.onLine("0003 002f 00000001", 2L)
+        val moves = d.onLine("0003 0035 00000190", 2L) + d.onLine("0003 0036 000001f4", 2L)
+        assertTrue(moves.filterIsInstance<TouchStreamDecoder.TouchEvent.Move>().isEmpty())
+    }
 }
