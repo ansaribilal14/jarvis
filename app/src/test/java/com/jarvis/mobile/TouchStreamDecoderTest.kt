@@ -1,5 +1,6 @@
 package com.jarvis.mobile
 
+import com.jarvis.mobile.core.shizuku.TouchStreamAnalyzer
 import com.jarvis.mobile.core.shizuku.TouchStreamDecoder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
