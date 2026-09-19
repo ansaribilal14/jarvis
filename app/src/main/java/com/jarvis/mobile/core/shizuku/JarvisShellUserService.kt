@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import androidx.annotation.Keep
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.OutputStream
 import java.util.concurrent.CopyOnWriteArrayList
@@ -56,7 +57,7 @@ class JarvisShellUserService() : IJarvisShellService.Stub() {
             Thread.currentThread().interrupt()
             false
         }
-        if (!finished) process.destroyForcibly()
+        if (!finished) process.destroy()
         outThread.join(JOIN_MS)
         errThread.join(JOIN_MS)
         return Bundle().apply {
@@ -96,7 +97,7 @@ class JarvisShellUserService() : IJarvisShellService.Stub() {
 
     override fun destroy() {
         if (!tornDown.compareAndSet(false, true)) return
-        streams.forEach { runCatching { it.destroyForcibly() } }
+        streams.forEach { runCatching { it.destroy() } }
         streams.clear()
         kotlin.system.exitProcess(0)
     }
