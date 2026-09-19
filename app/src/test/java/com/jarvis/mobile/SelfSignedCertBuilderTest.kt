@@ -24,7 +24,7 @@ class SelfSignedCertBuilderTest {
 
     @Test
     fun `certificate parses through standard CertificateFactory`() {
-        val cert = SelfSignedCertBuilder.build(newPair(), "CN=jarvis")
+        val cert = SelfSignedCertBuilder.build(newPair(), "jarvis")
         val reparsed = CertificateFactory.getInstance("X.509")
             .generateCertificate(ByteArrayInputStream(cert.encoded)) as java.security.cert.X509Certificate
         assertEquals(cert.subjectX500Principal, reparsed.subjectX500Principal)
@@ -42,7 +42,7 @@ class SelfSignedCertBuilderTest {
 
     @Test
     fun `certificate is v3 with long validity`() {
-        val cert = SelfSignedCertBuilder.build(newPair(), "CN=jarvis")
+        val cert = SelfSignedCertBuilder.build(newPair(), "jarvis")
         assertEquals(3, cert.version)
         assertTrue(cert.notAfter.after(cert.notBefore))
         // usable for decades - a phone's ADB identity never needs rotation
@@ -52,8 +52,8 @@ class SelfSignedCertBuilderTest {
 
     @Test
     fun `different keys produce different certificates`() {
-        val a = SelfSignedCertBuilder.build(newPair(), "CN=jarvis")
-        val b = SelfSignedCertBuilder.build(newPair(), "CN=jarvis")
+        val a = SelfSignedCertBuilder.build(newPair(), "jarvis")
+        val b = SelfSignedCertBuilder.build(newPair(), "jarvis")
         assertTrue(!a.publicKey.equals(b.publicKey))
         // same subject, different keys => different certs
         assertTrue(!a.encoded.contentEquals(b.encoded))

@@ -136,15 +136,16 @@ object SelfSignedCertBuilder {
         val notAfter = utcTimeField(2150)
 
         val spki = pair.public.encoded // X509 SubjectPublicKeyInfo, already DER
-        val cnDer = derSequence(derOid(2, 5, 4, 3) + derSet(derSequence(derUtf8(cn))))
+        // Name ::= SEQUENCE OF RDN;  RDN ::= SET OF SEQUENCE { type OID, value }
+        val cnName = derSequence(derSet(derSequence(derOid(2, 5, 4, 3) + derUtf8(cn))))
 
         val tbs = derSequence(
             byteArrayOf(0xA0.toByte(), 0x03, 0x02, 0x01, 0x02), // [0] EXPLICIT version = v3 (INTEGER 2)
             derInteger(BigInteger.ONE), // serial
             derSequence(derOid(1, 2, 840, 113549, 1, 1, 11) + derNull()), // sha256WithRSA
-            cnDer, // issuer
+            cnName, // issuer
             derSequence(notBefore, notAfter), // validity
-            cnDer, // subject
+            cnName, // subject
             spki,
         )
         val sig = Signature.getInstance("SHA256withRSA").apply {
