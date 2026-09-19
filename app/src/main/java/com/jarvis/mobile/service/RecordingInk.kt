@@ -17,6 +17,11 @@ import android.widget.TextView
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.util.Logx
 
+/** Ink trail fade-out time; a finished stroke disappears after this long. */
+private const val FADE_MS = 700L
+/** At most this many finished strokes stay on screen while fading. */
+private const val MAX_FINISHED_STROKES = 4
+
 /**
  * Live recording visualization (the "show what is being recorded" layer):
  * every touch captured by the precision stream is painted over the screen in
@@ -36,8 +41,6 @@ object RecordingInk {
 
     private const val TAG = "rec-ink"
     private const val ACCENT = 0xFFE4574F.toInt() // same red as the REC bubble
-    private const val FADE_MS = 700L
-    private const val MAX_FINISHED_STROKES = 4
     private const val INSTRUCTIONS_MS = 6_000L
 
     private val main = Handler(Looper.getMainLooper())

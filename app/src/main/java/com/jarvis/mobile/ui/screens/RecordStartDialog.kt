@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.jarvis.mobile.ui.screens
 
 import android.content.Intent
@@ -190,12 +192,13 @@ private fun queryLaunchableApps(): List<AppEntry> {
         val pm = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolved = pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-        resolved.asSequence()
-            .mapNotNull { it.loadLabel(pm)?.toString() to it.activityInfo?.packageName }
-            .filter { (_, pkg) -> pkg != null && pkg != context.packageName }
-            .map { (label, pkg) -> AppEntry(label, pkg!!) }
-            .distinctBy { it.pkg }
-            .sortedBy { it.label.lowercase() }
-            .toList()
+        val entries = ArrayList<AppEntry>(resolved.size)
+        for (ri in resolved) {
+            val pkg = ri.activityInfo?.packageName ?: continue
+            if (pkg == context.packageName) continue
+            val label = runCatching { ri.loadLabel(pm).toString() }.getOrDefault(pkg)
+            entries.add(AppEntry(label.ifBlank { pkg }, pkg))
+        }
+        entries.distinctBy { it.pkg }.sortedBy { it.label.lowercase() }
     }.getOrDefault(emptyList())
 }

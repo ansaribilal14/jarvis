@@ -37,7 +37,7 @@ object TouchStreamRecorder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var decoder: TouchStreamAnalyzer? = null
-    @Volatile private var handle: PrivShell.StreamHandle? = null
+    @Volatile private var handle: StreamHandle? = null
 
     fun isRunning(): Boolean = running.get()
 

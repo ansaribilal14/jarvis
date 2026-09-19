@@ -8,6 +8,7 @@ import java.io.File
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.KeyPair
+import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate

@@ -187,7 +187,7 @@ object SelfHostServer {
                 val n = stdout.read(buf)
                 if (n < 0) break
                 if (written + n > MAX_OUTPUT_BYTES) {
-                    written = MAX_OUTPUT_BYTES // stop streaming more, keep the exit path
+                    written = MAX_OUTPUT_BYTES.toLong() // stop streaming more, keep the exit path
                     break
                 }
                 out.writeInt(n)

@@ -215,7 +215,7 @@ class TouchStreamAnalyzer(
         val y = slotY[slot] ?: return
         val dx = x - lastEmitX
         val dy = y - lastEmitY
-        if (maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) >= MOVE_EMIT_PX) {
+        if (maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) >= TouchStreamDecoder.MOVE_EMIT_PX) {
             lastEmitX = x
             lastEmitY = y
             out.add(TouchStreamDecoder.TouchEvent.Move(x, y))
