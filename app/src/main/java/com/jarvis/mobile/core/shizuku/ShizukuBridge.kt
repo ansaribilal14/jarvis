@@ -103,17 +103,5 @@ object ShizukuBridge {
         }.onFailure { Logx.w(TAG, "requestPermission failed: ${it.message}") }
     }
 
-    /**
-     * Run a command under the shell identity synchronously; returns full stdout
-     * (argv-array only - never `sh -c`, the argus rule). Null on any failure.
-     */
-    fun exec(vararg cmd: String): String? = runCatching {
-        val p = Shizuku.newProcess(cmd, null, "/")
-        val out = p.inputStream.bufferedReader().use { it.readText() }
-        p.waitFor()
-        out
-    }.onFailure { Logx.w(TAG, "exec ${cmd.firstOrNull()} failed: ${it.message}") }
-        .getOrNull()
-
     fun ready(): Boolean = _state.value.status == Status.READY
 }
