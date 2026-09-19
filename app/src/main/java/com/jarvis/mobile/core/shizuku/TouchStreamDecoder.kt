@@ -62,7 +62,7 @@ object TouchStreamDecoder {
      * candidates -> the first with the largest X range (real digitizer).
      */
     fun parseDeviceProbe(output: String): TouchDevice? {
-        data class Candidate(val path: String, val name: String, var maxX: Int = -1, var maxY: Int = -1)
+        data class Candidate(val path: String, var name: String, var maxX: Int = -1, var maxY: Int = -1)
 
         val candidates = ArrayList<Candidate>()
         var current: Candidate? = null
