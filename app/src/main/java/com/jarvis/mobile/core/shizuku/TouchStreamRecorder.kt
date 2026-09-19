@@ -6,6 +6,7 @@ import com.jarvis.mobile.core.skills.JarvisAccessibilityServiceHolder
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.core.skills.SkillStep
 import com.jarvis.mobile.util.Logx
+import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.util.concurrent.atomic.AtomicBoolean
 
