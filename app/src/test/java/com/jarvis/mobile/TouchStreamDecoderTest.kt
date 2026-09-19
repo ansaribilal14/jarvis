@@ -39,6 +39,15 @@ class TouchStreamDecoderTest {
         assertNull(TouchStreamDecoder.parseLine("  name: \"goodix-ts\"  "))
     }
 
+    @Test
+    fun `ffffffff parses as -1 (tracking id lift)`() {
+        val ev = TouchStreamDecoder.parseLine("0003 0039 ffffffff")
+        assertNotNull(ev)
+        assertEquals(-1L, ev!!.value)
+        // Large-but-positive 32-bit values stay positive
+        assertEquals(0x7ffffffL, TouchStreamDecoder.parseLine("0003 0035 07ffffff")!!.value)
+    }
+
     // ------------------------------------------------------------ device probe
 
     @Test

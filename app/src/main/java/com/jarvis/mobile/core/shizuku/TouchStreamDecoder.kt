@@ -44,15 +44,18 @@ object TouchStreamDecoder {
     /**
      * Parse one getevent line. Returns null for non-event lines (device headers,
      * blanks). Handles both `[ ts] /dev/input/eventN: 0003 0035 000002d0` and the
-     * bare `0003 0035 000002d0` continuation form. Hex values, decimal tolerated.
+     * bare `0003 0035 000002d0` continuation form. Values are 32-bit fields; hex
+     * strings are interpreted as SIGNED 32-bit (getevent prints -1 as ffffffff,
+     * and ABS_MT_TRACKING_ID -1 = "contact lifted" is the critical case).
      */
     fun parseLine(line: String): Event? {
         val body = line.substringAfter(": ").trim()
         val parts = body.split(Regex("\\s+")).filter { it.isNotBlank() }
         if (parts.size < 3) return null
-        val type = parts[0].toIntOrNull(16) ?: return null
-        val code = parts[1].toIntOrNull(16) ?: return null
-        val value = parts[2].toLongOrNull(16) ?: parts[2].toLongOrNull() ?: return null
+        val type = parts[0].toIntOrNull(16) ?: parts[0].toIntOrNull() ?: return null
+        val code = parts[1].toIntOrNull(16) ?: parts[1].toIntOrNull() ?: return null
+        val raw = parts[2].toLongOrNull(16) ?: parts[2].toLongOrNull() ?: return null
+        val value = if (raw > Int.MAX_VALUE) raw - 0x1_0000_0000L else raw
         return Event(type, code, value)
     }
 
