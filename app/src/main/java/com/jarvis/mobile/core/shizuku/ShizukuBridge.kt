@@ -63,9 +63,9 @@ object ShizukuBridge {
     fun init() {
         runCatching {
             if (!listenersBound) {
-                Shizuku.addOnRequestPermissionResultListener(permissionListener)
-                Shizuku.addOnBinderReceivedListener(binderReceivedListener)
-                Shizuku.addOnBinderDeadListener(binderDeadListener)
+                Shizuku.addRequestPermissionResultListener(permissionListener)
+                Shizuku.addBinderReceivedListener(binderReceivedListener)
+                Shizuku.addBinderDeadListener(binderDeadListener)
                 listenersBound = true
             }
             refresh()
@@ -76,7 +76,7 @@ object ShizukuBridge {
     fun refresh() {
         val next = runCatching {
             when {
-                Shizuku.isServerRunning() && Shizuku.pingBinder() -> {
+                Shizuku.pingBinder() -> {
                     if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
                         BridgeState(Status.READY, "Shizuku ready")
                     } else {
@@ -95,7 +95,7 @@ object ShizukuBridge {
     /** Ask the user to grant the Shizuku permission (fires the manager dialog). */
     fun requestPermission() {
         runCatching {
-            if (Shizuku.isServerRunning() && Shizuku.pingBinder() &&
+            if (Shizuku.pingBinder() &&
                 Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED
             ) {
                 Shizuku.requestPermission(0x517)

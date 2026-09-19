@@ -130,7 +130,7 @@ class TouchStreamAnalyzer(
     /** Feed one line; returns touch primitives the recorder should act on. */
     fun onLine(line: String, nowMs: Long): List<TouchStreamDecoder.TouchEvent> {
         val ev = TouchStreamDecoder.parseLine(line) ?: return emptyList()
-        val out = ArrayList<TouchEvent>(1)
+        val out = ArrayList<TouchStreamDecoder.TouchEvent>(1)
         when (ev.type) {
             TouchStreamDecoder.EV_ABS -> when (ev.code) {
                 TouchStreamDecoder.ABS_MT_SLOT -> activeSlot = ev.value.toInt()
@@ -169,12 +169,12 @@ class TouchStreamAnalyzer(
     fun flush(nowMs: Long): List<TouchStreamDecoder.TouchEvent> {
         val s = primarySlot
         if (s < 0) return emptyList()
-        val out = ArrayList<TouchEvent>(1)
+        val out = ArrayList<TouchStreamDecoder.TouchEvent>(1)
         maybeContactEnd(s, nowMs, out)
         return out
     }
 
-    private fun tryContactStart(nowMs: Long, out: MutableList<TouchEvent>) {
+    private fun tryContactStart(nowMs: Long, out: MutableList<TouchStreamDecoder.TouchEvent>) {
         if (primarySlot >= 0) return // second finger while one is down: ignored
         val slot = if (slotTracking.isNotEmpty()) slotTracking.keys.min() else if (touchDown) 0 else return
         val x = slotX[slot]
@@ -183,17 +183,17 @@ class TouchStreamAnalyzer(
         primarySlot = slot
         downAt = nowMs
         downX = x; downY = y
-        out.add(TouchEvent.Down(x, y))
+        out.add(TouchStreamDecoder.TouchEvent.Down(x, y))
     }
 
-    private fun maybeContactEnd(slot: Int, nowMs: Long, out: MutableList<TouchEvent>) {
+    private fun maybeContactEnd(slot: Int, nowMs: Long, out: MutableList<TouchStreamDecoder.TouchEvent>) {
         if (slot != primarySlot) return
         val durMs = (nowMs - downAt).coerceAtLeast(0)
         val x = slotX[slot] ?: downX
         val y = slotY[slot] ?: downY
         val moved = kotlin.math.max(kotlin.math.abs(x - downX), kotlin.math.abs(y - downY))
         primarySlot = -1
-        out.add(TouchEvent.Up(x, y, durMs, moved))
+        out.add(TouchStreamDecoder.TouchEvent.Up(x, y, durMs, moved))
     }
 
     private fun scaleX(v: Long): Int = scale(v, deviceMaxX, screenWidthPx)
