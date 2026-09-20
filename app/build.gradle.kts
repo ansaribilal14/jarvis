@@ -15,8 +15,8 @@ android {
         applicationId = "com.jarvis.mobile"
         minSdk = 29
         targetSdk = 34
-        versionCode = 17
-        versionName = "2.2.0"
+        versionCode = 18
+        versionName = "2.3.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -59,7 +59,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true; buildConfig = true; aidl = true; prefab = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     lint {
         abortOnError = false
@@ -93,13 +93,6 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
-    // Shizuku (Apache-2.0): privileged shell for precision touch capture (getevent)
-    // and background app launches without root - same capability bus argus/AutoX use.
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    // BoringSSL prefab (Apache-2.0/ISC, io.github.vvb2060): SPAKE2 + HKDF for the
-    // BUILT-IN wireless-debugging pairing - the no-other-app Shizuku replacement.
-    implementation("io.github.vvb2060.ndk:boringssl:5.0")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

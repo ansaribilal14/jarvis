@@ -4,32 +4,24 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
-import com.jarvis.mobile.service.RecordingInk
+import com.jarvis.mobile.service.RecordBubble
 import com.jarvis.mobile.util.Logx
 
 /**
  * Where a recording begins: the launcher home screen, or a specific app the
- * user picks from the dropdown. Tasker-style macros conceptually "start
- * somewhere" - this makes the start explicit instead of silently recording
- * whatever screen JARVIS happened to be on.
+ * user picks from the dropdown. Makes the start explicit instead of silently
+ * recording whatever screen JARVIS happened to be on.
+ *
+ * Skills v3: the recorder captures what apps REPORT (clicks, typing, scrolls,
+ * app switches) and confirms every capture in the REC bubble the moment it
+ * lands. The old "red ink follows every tap" promise is gone - it belonged to
+ * the raw-touch mechanisms that never shipped working (docs/SKILLS_V3.md).
  */
 sealed interface RecordStartTarget {
     data object Home : RecordStartTarget
     data class App(val pkg: String, val label: String) : RecordStartTarget
 }
 
-/**
- * Orchestrates a recording that starts OUTSIDE of JARVIS:
- *
- *   tap "Record" -> pick start (home / app) -> Start
- *     1. recorder arms (capture is live before we leave the app)
- *     2. navigate home or launch the chosen app
- *     3. show the auto-fading "everything is recording" instructions card
- *     4. every tap/drag is now visualized on screen by [RecordingInk]
- *
- * Stopping stays where it always was: the floating REC bubble, the
- * notification action, or the Skills screen.
- */
 object RecordLauncher {
 
     private const val TAG = "record-launch"
@@ -44,16 +36,16 @@ object RecordLauncher {
                 .onFailure { Logx.w(TAG, "navigation to start failed: ${it.message}") }
         }, NAVIGATE_DELAY_MS)
         main.postDelayed({
-            RecordingInk.showInstructions(
+            RecordBubble.showInstructions(
                 context,
-                "Recording everything",
+                "Recording",
                 when (target) {
                     is RecordStartTarget.Home ->
-                        "You are on the home screen - every tap and swipe you make is recorded and shown as red ink. " +
-                            "Open your app and perform the task; tap the red REC bubble (or the notification) to stop."
+                        "Every reported tap, text field, scroll and app switch is captured - check the REC bubble to see captures land. " +
+                            "Use your phone normally; tap the REC bubble (or the notification) to stop."
                     is RecordStartTarget.App ->
-                        "${target.label} is recording - every tap and swipe is captured and drawn as red ink. " +
-                            "Do the task now; tap the red REC bubble (or the notification) when done."
+                        "${target.label} is being recorded - buttons, typing, scrolls and app switches are captured. " +
+                            "Do the task now; tap the REC bubble (or the notification) when done."
                 },
             )
         }, INSTRUCTIONS_DELAY_MS)

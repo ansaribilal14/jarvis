@@ -13,6 +13,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.jarvis.mobile.core.observer.ScreenElement
 import com.jarvis.mobile.core.observer.ScreenObservation
 import com.jarvis.mobile.core.skills.JarvisAccessibilityServiceHolder
+import com.jarvis.mobile.core.skills.MetricsHolder
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.channels.BufferOverflow
@@ -39,25 +40,19 @@ class JarvisAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         INSTANCE = this
         CONNECTED.value = true
-        // Recorder bridge: pkg + observation providers + precision capture control.
+        // Recorder bridge: pkg + observation providers + screen metrics for fraction math.
         JarvisAccessibilityServiceHolder.pkgProvider = { runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull() }
         JarvisAccessibilityServiceHolder.observeProvider = { max -> runCatching { observe(max) }.getOrNull() }
-        JarvisAccessibilityServiceHolder.precisionEnable = {
-            runCatching { com.jarvis.mobile.core.shizuku.TouchStreamRecorder.start() }
-                .onFailure { Logx.w(TAG, "precision enable: ${it.message}") }
+        MetricsHolder.provider = {
+            val m = resources.displayMetrics
+            m.widthPixels to m.heightPixels
         }
-        JarvisAccessibilityServiceHolder.precisionDisable = {
-            runCatching { com.jarvis.mobile.core.shizuku.TouchStreamRecorder.stop() }
-                .onFailure { Logx.w(TAG, "precision disable: ${it.message}") }
-        }
-        // A recording that survived a process kill keeps running (this also re-arms
-        // precision capture via resumeIfNeeded).
+        // A recording that survived a process kill keeps running.
         SkillRecorder.resumeIfNeeded()
         Logx.i(TAG, "Accessibility service connected")
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        runCatching { com.jarvis.mobile.core.shizuku.TouchStreamRecorder.stop() }
         INSTANCE = null
         CONNECTED.value = false
         Logx.w(TAG, "Accessibility service disconnected")
@@ -65,7 +60,6 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        runCatching { com.jarvis.mobile.core.shizuku.TouchStreamRecorder.stop() }
         INSTANCE = null
         CONNECTED.value = false
         super.onDestroy()
@@ -75,14 +69,10 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // ------------------------------------------------ precision touch capture
 
-    // v2.0: precision capture is the raw kernel touch stream (`getevent -t`)
-    // read through Shizuku - see core/shizuku/. The service only provides the
-    // start/stop hooks and the enrichment/pkg providers. The v1.9/v1.10
-    // framework-interception approaches (motionEventSources, then a
-    // TouchInteractionController gated on FLAG_REQUEST_TOUCH_EXPLORATION_MODE)
-    // are GONE: the first consumed the user's touches, the second depended on
-    // touch-exploration semantics that most ROMs never deliver correctly, and
-    // both produced "records nothing" reports.
+    // Skills v3: there is NO privileged touch capture anymore (v1.9 motion sources
+    // consumed touches, v1.10 TIC depended on touch-exploration semantics, v2.0/v2.1
+    // needed Shizuku/ADB and silently degraded). Capture is app-reported events only;
+    // exact targeting comes from the builder's "Pick on screen" flow. See docs/SKILLS_V3.md.
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
@@ -234,6 +224,54 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     fun findByText(text: String): List<AccessibilityNodeInfo> =
         runCatching { rootInActiveWindow?.findAccessibilityNodeInfosByText(text) }.getOrNull() ?: emptyList()
+
+    /**
+     * "Pick on screen" support: find a node whose bounds contain (x,y) across
+     * ALL retrievable windows (flagRetrieveInteractiveWindows), not just the
+     * active one - so the target app's controls stay addressable even while
+     * JARVIS's own picker screen is in front.
+     */
+    fun describeNodeAtPoint(x: Int, y: Int): ElementProbe? {
+        val wins = runCatching { windows }.getOrDefault(emptyList())
+        val roots = wins.mapNotNull { runCatching { it.root }.getOrNull() }.ifEmpty {
+            listOfNotNull(runCatching { rootInActiveWindow }.getOrNull())
+        }
+        for (root in roots) {
+            val q = ArrayDeque<AccessibilityNodeInfo>()
+            q.add(root)
+            var visited = 0
+            while (q.isNotEmpty() && visited < 400) {
+                val n = q.removeFirst()
+                visited++
+                val rect = Rect()
+                runCatching { n.getBoundsInScreen(rect) }.getOrNull()
+                if (x in rect.left..rect.right && y in rect.top..rect.bottom) {
+                    val meaningful = n.isClickable || n.text?.isNotBlank() == true || n.contentDescription?.isNotBlank() == true
+                    if (meaningful) {
+                        return ElementProbe(
+                            pkg = root.packageName?.toString(),
+                            text = runCatching { n.text?.toString() }.getOrNull()?.takeIf { it.isNotBlank() && !n.isPassword },
+                            desc = runCatching { n.contentDescription?.toString() }.getOrNull()?.takeIf { it.isNotBlank() },
+                            viewId = runCatching { n.viewIdResourceName }.getOrNull(),
+                            className = runCatching { n.className?.toString()?.substringAfterLast('.') }.getOrNull(),
+                            clickable = runCatching { n.isClickable }.getOrDefault(false),
+                        )
+                    }
+                }
+                for (i in 0 until n.childCount) runCatching { n.getChild(i) }.getOrNull()?.let { q.add(it) }
+            }
+        }
+        return null
+    }
+
+    data class ElementProbe(
+        val pkg: String?,
+        val text: String?,
+        val desc: String?,
+        val viewId: String?,
+        val className: String?,
+        val clickable: Boolean,
+    )
 
     // ------------------------------------------------------------ actions
 

@@ -23,6 +23,7 @@ real device, run the TESTING.md scenario list.
 ## Version history (shipped)
 | version | code | theme |
 |---|---|---|
+| v2.3.0 | 18 | skills v3 rescrap: MacroDroid-style builder + catalog, Pick-on-screen (screenshot + fractional point, works in every app), AutoX-grade runner (wait-for-element/node-first/gesture fallback/verify), persisted run log, honest quick record, ALL privilege machinery deleted (Shizuku/ADB/SPAKE2/getevent), legacy skill migration |
 | v2.2.0 | 17 | real-key-verified cloud presets (NIM llama-3.x family 410'd; gpt-oss-20b + 5 OpenRouter free models verified live), per-provider encrypted key slots + legacy migration, fetch-live-model-list button, provider catalog in core, Discord outbound notification channel (token+channel+test+push), CloudProvidersTest |
 | v2.1.0 | 16 | built-in privileged setup (in-app wireless-debugging pairing + own shell server, no second app), live ink visualization of taps/drags, record-start picker (home/app) with instruction card |
 | v2.0.0 | 15 | overhaul: Shizuku getevent precision capture + REC bubble console, trigger engine (app/time/notification/battery), M3 Expressive theme, new logo, skill trigger editor |

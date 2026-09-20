@@ -29,9 +29,30 @@ HONEST RESULT (completed / partial / failed / blocked / could-not-verify)
    enable Accessibility → start using it.
 
 **Requirements:** Android 10+ (minSdk 29), arm64-v8a device. The APK itself is small
-(~21 MB); model files are downloaded separately inside the app. The built-in precision-capture
-setup uses Wireless debugging, which exists on Android 11+; on Android 10 the external Shizuku
-app remains the precision path.
+(~21 MB); model files are downloaded separately inside the app. No root, no Shizuku, no ADB,
+no Wireless debugging - the skill system runs entirely on public APIs ("Pick on screen"
+needs Android 11+ for the screenshot API; manual targeting works everywhere).
+
+## What's new in v2.3.0 - Skills v3 (the rescrap)
+
+Four recorder rewrites in a row failed on a real device, so v2.3 does what MacroDroid does:
+it stops promising touch-recording and builds skills the way that always works.
+
+- **Skill builder** (the new primary flow): pick actions from a catalog - Open app, Tap,
+  Long-press, Type text, Scroll, Back, Home, Recents, Wait, Notify - reorder, edit, and
+  **test each action in place** before saving.
+- **"Pick on screen"**: JARVIS screenshots the screen, you tap the exact element on the
+  screenshot, JARVIS prefills the element's label/id and stores fractional coordinates that
+  survive rotation and device changes. Works in every app, including games and canvas apps.
+- **Honest quick record** (secondary): captures what apps report, confirms every capture in
+  the REC bubble the moment it lands, tells you when an app reports nothing, and refuses to
+  start without the accessibility service.
+- **Runner with guarantees**: wait-for-element polling, node-first action, gesture fallback,
+  per-action verification, an app guard, and a persisted **run log** (`✓/✗ what - why`) shown
+  on every skill card.
+- **The privilege machinery is gone** (Shizuku, in-app ADB pairing, getevent, SPAKE2/TLS):
+  deleted, not deprecated. Your old skills migrate automatically.
+- Full research + architecture: `docs/SKILLS_V3.md`.
 
 ## What's new in v2.2.0
 

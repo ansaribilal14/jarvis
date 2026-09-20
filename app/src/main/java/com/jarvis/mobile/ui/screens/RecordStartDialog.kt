@@ -2,8 +2,6 @@
 
 package com.jarvis.mobile.ui.screens
 
-import android.content.Intent
-import android.content.pm.PackageManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,8 +30,8 @@ import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.core.skills.RecordLauncher
 import com.jarvis.mobile.core.skills.RecordStartTarget
-
-private data class AppEntry(val label: String, val pkg: String)
+import com.jarvis.mobile.ui.theme.Accent
+import com.jarvis.mobile.ui.theme.Danger
 
 /** Cross-screen hand-off: HomeScreen's chip opens the Skills screen WITH the start dialog showing. */
 object RecordStartBus {
@@ -42,10 +40,11 @@ object RecordStartBus {
 
 /**
  * "Where should the recording start?" - asked every time the user taps
- * Record. Home screen (auto-navigates there) or any launchable app from the
- * dropdown (auto-launches it). On Start the recorder arms FIRST, then we
- * navigate, then the instruction card explains that everything is being
- * recorded while the red ink visualization follows every tap.
+ * Quick record. Skills v3 honesty rules:
+ *  - the Start button is HARD-GATED on the accessibility service being
+ *    connected (v1/v2 let recording start with capture dead);
+ *  - the copy says exactly what gets captured (what apps REPORT) and what
+ *    does not (games/canvas apps -> use the builder's Pick on screen).
  */
 @Composable
 fun RecordStartDialog(
@@ -58,6 +57,7 @@ fun RecordStartDialog(
     var loadingApps by remember { mutableStateOf(false) }
     var selectedApp by remember { mutableStateOf<AppEntry?>(null) }
     var dropdownOpen by remember { mutableStateOf(false) }
+    val a11yConnected = com.jarvis.mobile.accessibility.JarvisAccessibilityService.CONNECTED.value
 
     LaunchedEffect(Unit) {
         loadingApps = true
@@ -70,6 +70,19 @@ fun RecordStartDialog(
         title = { Text("Where should the recording start?") },
         text = {
             Column {
+                if (!a11yConnected) {
+                    Text(
+                        "⚠ JARVIS is not enabled in Settings → Accessibility - recording cannot capture anything until it is.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Danger,
+                    )
+                    Text(
+                        "Enable it, then come back. Or use 'Build skill' → 'Pick on screen' which also needs it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    return@Column
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -157,7 +170,9 @@ fun RecordStartDialog(
                     }
                 }
                 Text(
-                    "After Start: recording is armed, the screen navigates, and a card reminds you that everything is being recorded.",
+                    "What gets captured: buttons, text fields, scrolls and app switches that apps report to " +
+                        "accessibility - each one is confirmed in the REC bubble as it lands. " +
+                        "Games and canvas apps usually report nothing: build those with 'Pick on screen' instead.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 10.dp),
@@ -177,28 +192,11 @@ fun RecordStartDialog(
                         onStarted()
                     }
                 },
-                enabled = mode == 0 || selectedApp != null,
-            ) { Text("Start") }
+                enabled = a11yConnected && (mode == 0 || selectedApp != null),
+            ) { Text("Start", color = if (a11yConnected) Accent else Danger) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
-}
-
-private fun queryLaunchableApps(): List<AppEntry> {
-    val context = JarvisApp.instance
-    return runCatching {
-        val pm = context.packageManager
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val resolved = pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-        val entries = ArrayList<AppEntry>(resolved.size)
-        for (ri in resolved) {
-            val pkg = ri.activityInfo?.packageName ?: continue
-            if (pkg == context.packageName) continue
-            val label = runCatching { ri.loadLabel(pm).toString() }.getOrDefault(pkg)
-            entries.add(AppEntry(label.ifBlank { pkg }, pkg))
-        }
-        entries.distinctBy { it.pkg }.sortedBy { it.label.lowercase() }
-    }.getOrDefault(emptyList())
 }

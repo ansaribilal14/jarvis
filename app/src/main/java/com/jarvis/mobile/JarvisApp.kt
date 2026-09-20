@@ -13,7 +13,6 @@ import com.jarvis.mobile.core.model.RemoteOpenAiProvider
 import com.jarvis.mobile.core.notifications.NotificationCache
 import com.jarvis.mobile.core.remote.TelegramRemote
 import com.jarvis.mobile.core.routines.RoutineManager
-import com.jarvis.mobile.core.shizuku.ShizukuBridge
 import com.jarvis.mobile.core.tools.ToolRegistry
 import com.jarvis.mobile.core.tools.impl.buildToolSet
 import com.jarvis.mobile.core.triggers.TimeTriggerScheduler
@@ -83,15 +82,6 @@ class JarvisApp : Application() {
             }
         }
         // v2.0 overhaul pieces:
-        ShizukuBridge.init()
-        // v2.1: built-in (in-app) privileged shell - wire the key storage dir and
-        // restore the "paired" state so the Skills screen shows the right status.
-        com.jarvis.mobile.core.adb.AdbKeyStoreDirs.dir = filesDir
-        if (com.jarvis.mobile.core.adb.SelfHostShell.paired(this)) {
-            CoroutineScope(Dispatchers.Default).launch {
-                com.jarvis.mobile.core.adb.SelfHostShell.connect(this@JarvisApp)
-            }
-        }
         runCatching { TimeTriggerScheduler.armAll(this) }
         // App open/close triggers ride the accessibility window stream (free -
         // the service is already required for recording/replay).

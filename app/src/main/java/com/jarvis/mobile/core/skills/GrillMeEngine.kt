@@ -73,6 +73,11 @@ object GrillMeEngine {
         askNext()
     }
 
+    /** Skills-v3 entry point: interview a finished capture (actions) directly. */
+    fun startFinished(actions: List<SkillAction>) {
+        start(actionsToSteps(actions))
+    }
+
     fun answer(text: String) {
         val st = _state.value
         val q = st.currentQuestion ?: return
@@ -162,7 +167,7 @@ object GrillMeEngine {
         )
         val refined = llmRefine(st) ?: base
         _state.value = GrillState(done = true, steps = st.steps, qa = st.qa, draft = refined)
-        Logx.i(TAG, "Draft written: \"${refined.name}\" (${refined.steps.size} steps, LLM=${refined !== base})")
+        Logx.i(TAG, "Draft written: \"${refined.name}\" (${refined.stepList().size} actions, LLM=${refined !== base})")
     }
 
     /** The first Q&A usually names the skill; fall back to the first meaningful step. */

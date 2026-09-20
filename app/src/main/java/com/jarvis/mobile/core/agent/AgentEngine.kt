@@ -12,7 +12,7 @@ import com.jarvis.mobile.core.safety.RiskClassifier
 import com.jarvis.mobile.core.skills.SkillDefinition
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.core.skills.SkillRunner
-import com.jarvis.mobile.core.skills.SkillStep
+import com.jarvis.mobile.core.skills.SkillAction
 import com.jarvis.mobile.core.skills.SkillStore
 import com.jarvis.mobile.core.tools.PlannedAction
 import com.jarvis.mobile.core.tools.ToolContext
@@ -315,19 +315,22 @@ object AgentEngine {
     }
 
     /**
-     * Deterministic replay with the full safety net: per-step observation,
-     * risk classification + confirmations for typing-class steps, live events,
-     * one retry on failure, honest partial/failed outcomes.
+     * Deterministic execution with the full safety net (skills v3): per-action
+     * observation, the app guard, wait-for-element polling inside [SkillRunner],
+     * risk classification + confirmations for typing-class actions, live events,
+     * one retry on failure, and an honest per-action run log persisted to the
+     * skill itself.
      */
     private suspend fun executeSkill(skill: SkillDefinition) = coroutineScope {
         SkillRecorder.suppress = true // never record our own replay
+        val actions = skill.stepList()
         val startMs = System.currentTimeMillis()
         taskStartMs = startMs
         synchronized(stateLock) { taskEvents.clear() }
         val goalLabel = "Skill: ${skill.name}"
         val taskId = c.memory.startTask(goalLabel, "SKILL")
         c.memory.addChat("USER", "Run skill \"${skill.name}\"", taskId)
-        val total = skill.steps.size
+        val total = actions.size
         val steps = mutableListOf<StepUi>()
 
         fun update(f: (AgentUiState) -> AgentUiState) {
@@ -348,10 +351,10 @@ object AgentEngine {
                 thinkingDetail = null, events = emptyList(), confirmation = null,
             )
         }
-        event("Replaying skill \"${skill.name}\" (${total} steps)", "ok")
+        event("Running skill \"${skill.name}\" ($total actions)", "ok")
         com.jarvis.mobile.service.AgentForegroundService.start("Running skill: ${skill.name}")
         c.voiceOutput.speak("Running ${skill.name}.")
-        Logx.i(TAG, "Skill start: \"${skill.name}\" ($total steps)")
+        Logx.i(TAG, "Skill start: \"${skill.name}\" ($total actions)")
 
         val autoApprove = runCatching { c.settings.autoApproveMedium.first() }.getOrDefault(false)
         var ok = 0
@@ -359,51 +362,62 @@ object AgentEngine {
         var unverified = 0
         var declined = false
         var aborted: String? = null
+        val runLog = mutableListOf<String>()
 
         try {
-            for ((index, step) in skill.steps.withIndex()) {
+            for ((index, action) in actions.withIndex()) {
                 if (stopped) break
-                // 1. OBSERVE fresh state for this step (recording may be stale).
+                // 1. OBSERVE fresh state for this action (the screen may have moved on).
                 val obs = if (JarvisAccessibilityService.isReady) {
                     withTimeoutOrNull(2500) { JarvisAccessibilityService.INSTANCE?.observe() }
                 } else null
 
-                // 2. RISK: replaying is still acting - typing-class steps confirm.
-                val risk = RiskClassifier.classify(skillSpecFor(step), skillArgsFor(step), obs?.packageName ?: step.pkg)
+                // 2. RISK: replaying is still acting - typing-class actions confirm.
+                val risk = RiskClassifier.classify(skillSpecFor(action), skillArgsFor(action), obs?.packageName ?: action.target?.pkg)
                 if (RiskClassifier.requiresConfirmation(risk, autoApprove)) {
-                    event("Step ${index + 1} needs your confirmation", "warn")
+                    event("Action ${index + 1} needs your confirmation", "warn")
                     val approved = ConfirmationManager.request(
-                        what = "Skill step ${index + 1}/$total: ${step.describe()}",
-                        target = obs?.packageName ?: step.pkg ?: "system",
-                        details = step.describe().take(220),
-                        why = RiskClassifier.whyConfirmation(skillSpecFor(step), risk, skillArgsFor(step)),
+                        what = "Skill action ${index + 1}/$total: ${action.describe()}",
+                        target = obs?.packageName ?: action.target?.pkg ?: "system",
+                        details = action.describe().take(220),
+                        why = RiskClassifier.whyConfirmation(skillSpecFor(action), risk, skillArgsFor(action)),
                         risk = risk.name,
                     )
                     update { it.copy(confirmation = null) }
                     if (!approved) {
                         declined = true
-                        aborted = "You declined step ${index + 1}. Skill stopped safely."
-                        event("Step declined - skill stopped safely", "warn")
+                        aborted = "You declined action ${index + 1}. Skill stopped safely."
+                        runLog.add("${index + 1}. \u2717 ${action.describe()} - declined by you")
+                        event("Action declined - skill stopped safely", "warn")
                         break
                     }
                 }
 
                 // 3. ACT (with one honest retry on failure).
-                update { it.copy(status = AgentStatus.ACTING, activeTool = step.type.lowercase(), currentApp = obs?.packageName, stepIndex = index + 1) }
-                steps.add(StepUi(index + 1, step.type.lowercase(), step.describe(), "RUNNING"))
+                update { it.copy(status = AgentStatus.ACTING, activeTool = action.type.lowercase(), currentApp = obs?.packageName, stepIndex = index + 1) }
+                steps.add(StepUi(index + 1, action.type.lowercase(), action.describe(), "RUNNING"))
                 update { it }
-                event("Step ${index + 1}/$total: ${step.describe()}")
+                event("Action ${index + 1}/$total: ${action.describe()}")
 
-                var result = withTimeoutOrNull(20_000) { SkillRunner.runStep(step, obs) }
-                    ?: SkillRunner.StepResult(false, "Step timed out after 20s", false)
+                val svc = JarvisAccessibilityService.INSTANCE
+                var result = if (svc == null) {
+                    SkillRunner.ActionOutcome(false, "Accessibility service is off - enable it in Settings", false)
+                } else {
+                    withTimeoutOrNull(25_000) { SkillRunner.runAction(svc, action, obs) }
+                        ?: SkillRunner.ActionOutcome(false, "Action timed out after 25s", false)
+                }
                 if (!result.ok && !stopped) {
-                    event("Step failed (${result.message.take(80)}) - retrying once…", "warn")
+                    event("Action failed (${result.message.take(80)}) - retrying once\u2026", "warn")
+                    delay(400)
                     val obs2 = if (JarvisAccessibilityService.isReady) {
                         withTimeoutOrNull(2500) { JarvisAccessibilityService.INSTANCE?.observe() }
                     } else null
-                    delay(400)
-                    result = withTimeoutOrNull(20_000) { SkillRunner.runStep(step, obs2) }
-                        ?: SkillRunner.StepResult(false, "Step timed out after 20s", false)
+                    result = if (svc == null) {
+                        result
+                    } else {
+                        withTimeoutOrNull(25_000) { SkillRunner.runAction(svc, action, obs2) }
+                            ?: SkillRunner.ActionOutcome(false, "Action timed out after 25s", false)
+                    }
                 }
 
                 // 4. RECORD honestly.
@@ -411,63 +425,73 @@ object AgentEngine {
                     ok++
                     if (!result.verified) unverified++
                 } else failed++
+                runLog.add("${index + 1}. ${if (result.ok) "\u2713" else "\u2717"} ${action.describe()} - ${result.message.take(90)}")
                 steps[steps.size - 1] = steps.last().copy(
                     status = if (result.ok) "SUCCESS" else "FAILED",
                     verdict = result.message.take(120),
                 )
                 update { it }
                 event(
-                    if (result.ok) "Done: ${result.message.take(90)}" else "Step ${index + 1} failed: ${result.message.take(90)}",
+                    if (result.ok) "Done: ${result.message.take(90)}" else "Action ${index + 1} failed: ${result.message.take(90)}",
                     if (result.ok) "ok" else "err",
                 )
                 c.memory.addStep(
-                    taskId, index + 1, "skill.${step.type.lowercase()}", step.describe(),
+                    taskId, index + 1, "skill.${action.type.lowercase()}", action.describe(),
                     if (result.ok) "SUCCESS" else "FAILED", result.message,
                     if (result.verified) "VERIFIED" else if (result.ok) "UNVERIFIED" else "FAILED",
                 )
                 if (!result.ok) {
-                    aborted = "Step ${index + 1} failed twice (${result.message.take(100)}). " +
-                        "The screen likely no longer matches the recording."
-                    event("Aborting: a replayed step failed twice - replay continues only when the screen matches", "err")
+                    aborted = "Action ${index + 1} failed twice (${result.message.take(100)})."
+                    event("Aborting: an action failed twice - the skill stops instead of guessing", "err")
                     break
                 }
             }
 
             val summary = when {
                 declined -> aborted ?: "Stopped by user."
-                aborted != null -> "Skill \"${skill.name}\" stopped early: $aborted ($ok of $total steps succeeded" +
+                aborted != null -> "Skill \"${skill.name}\" stopped early: $aborted ($ok of $total actions succeeded" +
                     (if (unverified > 0) ", $unverified unverified" else "") + ")."
-                failed == 0 && ok == total -> "Skill \"${skill.name}\" completed: all $total steps succeeded" +
+                failed == 0 && ok == total -> "Skill \"${skill.name}\" completed: all $total actions succeeded" +
                     (if (unverified > 0) " ($unverified could not be verified)" else "") + "."
-                else -> "Skill \"${skill.name}\" finished with problems: $ok of $total steps succeeded, $failed failed."
+                else -> "Skill \"${skill.name}\" finished with problems: $ok of $total actions succeeded, $failed failed."
             }
+            runLog.add("Result: ${summary.take(160)}")
             finish(taskId, goalLabel, "SKILL", summary, ok)
         } catch (ce: CancellationException) {
             event("Skill stopped by user", "warn")
+            runLog.add("Stopped by user.")
             c.memory.finishTask(taskId, "STOPPED", "Stopped by user.", ok)
         } catch (t: Throwable) {
             Logx.e(TAG, "Skill crashed: ${t.message}")
+            runLog.add("Error: ${t.message?.take(100)}")
             c.memory.finishTask(taskId, "FAILED", "Skill error: ${t.message?.take(100)}", ok)
             commit { it.copy(status = AgentStatus.FAILED, finalResponse = "The skill hit an internal error: ${t.message?.take(120)}") }
             com.jarvis.mobile.service.AgentForegroundService.stopAll()
         } finally {
             ticker.cancel()
             SkillRecorder.suppress = false
-            SkillStore.markRun(JarvisApp.instance, skill.id)
+            val allOk = failed == 0 && !declined && aborted == null && ok == total && total > 0
+            SkillStore.markRun(
+                JarvisApp.instance, skill.id,
+                ok = if (declined && ok == 0) null else allOk,
+                log = runLog.toList(),
+            )
         }
     }
 
-    /** Synthetic specs so skill steps ride the SAME risk ladder as agent actions. */
-    private fun skillSpecFor(step: SkillStep): com.jarvis.mobile.core.tools.ToolSpec = when (step.type) {
-        "TEXT" -> com.jarvis.mobile.core.tools.ToolSpec("type_text", "Replay recorded text entry", risk = com.jarvis.mobile.core.tools.Risk.MEDIUM, needsAccessibility = true)
-        "LONG_PRESS" -> com.jarvis.mobile.core.tools.ToolSpec("long_press", "Replay recorded long-press", risk = com.jarvis.mobile.core.tools.Risk.MEDIUM, needsAccessibility = true)
-        "TAP" -> com.jarvis.mobile.core.tools.ToolSpec("tap", "Replay recorded tap", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true)
-        else -> com.jarvis.mobile.core.tools.ToolSpec("tap", "Replay recorded navigation step", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true)
+    /** Synthetic specs so skill actions ride the SAME risk ladder as agent tools. */
+    private fun skillSpecFor(action: SkillAction): com.jarvis.mobile.core.tools.ToolSpec = when (action.type) {
+        "UI_TEXT" -> com.jarvis.mobile.core.tools.ToolSpec("type_text", "Replay text entry", risk = com.jarvis.mobile.core.tools.Risk.MEDIUM, needsAccessibility = true)
+        "UI_LONG_PRESS" -> com.jarvis.mobile.core.tools.ToolSpec("long_press", "Replay long-press", risk = com.jarvis.mobile.core.tools.Risk.MEDIUM, needsAccessibility = true)
+        "UI_CLICK" -> com.jarvis.mobile.core.tools.ToolSpec("tap", "Replay tap", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true)
+        "NOTIFY" -> com.jarvis.mobile.core.tools.ToolSpec("notify", "Show a notification", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = false)
+        else -> com.jarvis.mobile.core.tools.ToolSpec("tap", "Replay navigation action", risk = com.jarvis.mobile.core.tools.Risk.LOW, needsAccessibility = true)
     }
 
-    private fun skillArgsFor(step: SkillStep) = kotlinx.serialization.json.buildJsonObject {
-        step.input?.let { put("text", it) }
-        step.text?.let { put("target", it) }
+    private fun skillArgsFor(action: SkillAction) = kotlinx.serialization.json.buildJsonObject {
+        action.input?.let { put("text", it) }
+        action.target?.text?.let { put("target", it) }
+        action.target?.pkg?.let { put("package", it) }
     }
 
     // ------------------------------------------------------------------ loop

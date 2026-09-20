@@ -2,7 +2,6 @@ package com.jarvis.mobile
 
 import com.jarvis.mobile.core.planner.DecisionGrammar
 import com.jarvis.mobile.core.planner.Planner
-import com.jarvis.mobile.core.skills.RawTapMerger
 import com.jarvis.mobile.core.tools.ParamSpec
 import com.jarvis.mobile.core.tools.Risk
 import com.jarvis.mobile.core.tools.ToolSpec
@@ -158,116 +157,7 @@ class FlatContractTest {
 
     // ------------------------------------------------------- raw tap merger
 
-    @Test
-    fun `raw down plus nearby click event merges into one semantic tap`() {
-        val m = RawTapMerger()
-        assertTrue(m.onRawDown(1000L, 500, 800).isEmpty())
-        val outs = m.onEventClick(
-            now = 1150L, kind = "TAP", pkg = "com.test",
-            viewId = "com.test:id/btn", text = "OK", desc = null, x = 505, y = 810,
-        )
-        assertEquals(1, outs.size)
-        val s = (outs[0] as RawTapMerger.Out.Add).step
-        assertEquals("TAP", s.type)
-        assertEquals("OK", s.text)
-        assertEquals(500, s.x) // RAW coordinates win - exact where the user touched
-        assertEquals(800, s.y)
-        // Nothing left pending - no duplicate coordinate tap on sweep.
-        assertTrue(m.sweep(10_000L).isEmpty())
-    }
-
-    @Test
-    fun `unclaimed raw down commits as coordinate tap after window`() {
-        val m = RawTapMerger()
-        m.onRawDown(1000L, 120, 640)
-        // Still inside the window: not committed yet.
-        assertTrue(m.sweep(1000L + 1000).isEmpty())
-        val outs = m.sweep(1000L + 2000)
-        assertEquals(1, outs.size)
-        assertEquals("TAP", outs[0].type)
-        assertEquals(120, outs[0].x)
-        assertEquals(640, outs[0].y)
-    }
-
-    @Test
-    fun `late click event replaces an already committed raw tap`() {
-        val m = RawTapMerger()
-        m.onRawDown(1000L, 300, 400)
-        val committed = m.sweep(1000L + 2000) // window passed - raw tap committed
-        assertEquals(1, committed.size)
-        val outs = m.onEventClick(
-            now = 1000L + 2300, kind = "TAP", pkg = "com.test",
-            viewId = null, text = "Later", desc = null, x = 302, y = 405,
-        )
-        assertEquals(1, outs.size)
-        val rep = outs[0] as RawTapMerger.Out.Replace
-        assertEquals("Later", rep.new.text)
-        assertEquals(302, rep.new.x)
-    }
-
-    @Test
-    fun `click event without raw tap is a standalone semantic step`() {
-        val m = RawTapMerger()
-        val outs = m.onEventClick(
-            now = 5000L, kind = "TAP", pkg = "com.test",
-            viewId = null, text = "Menu", desc = null, x = 10, y = 20,
-        )
-        val s = (outs[0] as RawTapMerger.Out.Add).step
-        assertEquals("Menu", s.text)
-        assertEquals(10, s.x)
-    }
-
-    @Test
-    fun `scroll event cancels pending raw down and records direction`() {
-        val m = RawTapMerger()
-        m.onRawDown(1000L, 540, 1400)
-        val swept = m.onEventScroll(1100L)
-        // The fling's DOWN must NOT later surface as a bogus tap.
-        assertTrue(m.sweep(5000L).isEmpty())
-        assertTrue(swept.isEmpty())
-    }
-
-    @Test
-    fun `long click event merges with kind long press`() {
-        val m = RawTapMerger()
-        m.onRawDown(1000L, 200, 300)
-        val outs = m.onEventClick(
-            now = 1900L, kind = "LONG_PRESS", pkg = "com.test",
-            viewId = null, text = null, desc = "Item options", x = 205, y = 298,
-        )
-        val s = (outs[0] as RawTapMerger.Out.Add).step
-        assertEquals("LONG_PRESS", s.type)
-        assertEquals("Item options", s.desc)
-        assertEquals(200, s.x)
-    }
-
-    @Test
-    fun `two rapid raw downs with one event merge correctly`() {
-        val m = RawTapMerger()
-        m.onRawDown(1000L, 100, 100)
-        m.onRawDown(1150L, 500, 500)
-        val outs = m.onEventClick(
-            now = 1250L, kind = "TAP", pkg = null,
-            viewId = null, text = "B", desc = null, x = 502, y = 501,
-        )
-        assertEquals(1, outs.size)
-        assertEquals(500, (outs[0] as RawTapMerger.Out.Add).step.x)
-        // First tap still pending -> commits on sweep as coordinate tap.
-        val swept = m.sweep(3000L)
-        assertEquals(1, swept.size)
-        assertEquals(100, swept[0].x)
-    }
-
-    @Test
-    fun `flush commits everything immediately`() {
-        val m = RawTapMerger()
-        m.onRawDown(1000L, 42, 43)
-        val outs = m.flush()
-        assertEquals(1, outs.size)
-        assertEquals(42, outs[0].x)
-        assertTrue(m.sweep(9000L).isEmpty())
-    }
-
+    
     // ------------------------------------------------------------- grammar
 
     @Test

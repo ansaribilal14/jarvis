@@ -20,9 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.jarvis.mobile.JarvisApp
-import com.jarvis.mobile.core.adb.SelfHostShell
 import com.jarvis.mobile.core.agent.AgentEngine
-import com.jarvis.mobile.core.shizuku.ShizukuBridge
 import com.jarvis.mobile.core.skills.SkillDefinition
 import com.jarvis.mobile.core.skills.SkillRecorder
 import com.jarvis.mobile.core.skills.SkillStore
@@ -30,24 +28,26 @@ import com.jarvis.mobile.core.triggers.TimeTriggerScheduler
 import com.jarvis.mobile.core.triggers.TriggerEngine
 import com.jarvis.mobile.ui.theme.Accent
 import com.jarvis.mobile.ui.theme.Danger
+import com.jarvis.mobile.ui.theme.Ok
 
 /**
- * Skills hub: start/stop the recorder, review a finished recording
- * (edit as-is, or run /grill-me), and run/edit/delete saved skills.
+ * Skills hub - skills v3 (docs/SKILLS_V3.md):
+ *  - BUILD first (MacroDroid model): catalog actions, Pick-on-screen targeting,
+ *    per-action test, honest run log;
+ *  - QUICK RECORD as the secondary path: app-reported events only, every
+ *    capture confirmed live, hard-gated on accessibility being connected.
+ * The v1/v2 privilege-machinery setup cards (Shizuku / built-in shell) are GONE.
  */
 @Composable
 fun SkillsScreen(openTab: (String) -> Unit) {
     val context = JarvisApp.instance
     val rec by SkillRecorder.state.collectAsState()
     val agentState by AgentEngine.state.collectAsState()
-    val shizuku by ShizukuBridge.state.collectAsState()
-    val selfhost by SelfHostShell.state.collectAsState()
     var skills by remember { mutableStateOf(SkillStore.list(context)) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var triggerLog by remember { mutableStateOf(TriggerEngine.recentLog) }
     var showRecordStart by remember { mutableStateOf(false) }
-    var showSelfHostSetup by remember { mutableStateOf(false) }
-    var showShizukuRow by remember { mutableStateOf(false) }
+    var expandedLog by remember { mutableStateOf<String?>(null) }
 
     // HomeScreen's "Record a skill" chip lands here with the dialog open.
     LaunchedEffect(RecordStartBus.openRecordStart.value) {
@@ -71,11 +71,37 @@ fun SkillsScreen(openTab: (String) -> Unit) {
     ) {
         Text("Skills", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Record yourself doing something once - JARVIS replays it whenever you want. " +
-                "Recorded actions stay on this phone.",
+            "Build skills from proven actions and aim them at the exact element - or quick-record what apps report. " +
+                "Everything stays on this phone.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        // ------------------------------------------------------ build card
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Build a skill", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "MacroDroid-style: add actions from the catalog (open app, tap, type, scroll, wait…) and aim each one " +
+                        "with 'Pick on screen' - a screenshot you tap, so it works in EVERY app, including games. " +
+                        "Test each action in place before you save.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    onClick = {
+                        SkillDraftBus.draft.value = SkillDefinition(id = SkillStore.newId(), name = "My skill")
+                        openTab("skill_builder")
+                    },
+                    enabled = AgentEngine.isRunning().not(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("New skill") }
+            }
+        }
 
         // ------------------------------------------------------ recorder card
         Surface(
@@ -93,29 +119,28 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                     )
                     Text(
                         when {
-                            rec.active -> "Recording… ${rec.steps.size} steps"
-                            rec.finishedSteps != null -> "Recording finished - ${rec.finishedSteps?.size ?: 0} steps"
-                            else -> "Skill recorder"
+                            rec.active -> "Recording… ${rec.steps.size} actions"
+                            rec.finishedSteps != null -> "Recording finished - ${rec.finishedSteps?.size ?: 0} actions"
+                            else -> "Quick record"
                         },
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
                 when {
                     rec.active -> {
-                        // Honest capture-mode status - the user should never have to
-                        // guess whether anything is being recorded.
                         Text(
-                            when {
-                                rec.precisionActive -> "${rec.captureLayer} - every tap in every app is recorded (${rec.rawTaps} raw touches seen), drawn as live ink"
-                                else -> "App-event capture - buttons, typing, scrolls, app switches. Set up the built-in precision shell below for tap-by-tap capture (even in apps that hide from accessibility)."
-                            },
+                            "App-event capture: buttons, typing, scrolls, app switches - confirmed live in the REC bubble " +
+                                "(${rec.eventsSeen} events seen, ${rec.unusableEvents} not reportable by this app).",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (rec.precisionActive) Accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        rec.warnings.forEach { w ->
+                            Text("⚠ $w", style = MaterialTheme.typography.labelSmall, color = Danger)
+                        }
                         if (rec.steps.isNotEmpty()) {
-                            rec.steps.takeLast(4).forEach { step ->
+                            rec.steps.takeLast(4).forEach { action ->
                                 Text(
-                                    "• ${step.describe()}",
+                                    "• ${action.describe()}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -126,30 +151,33 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Danger),
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Stop recording") }
-                        Text(
-                            "Use your phone normally - switch apps, tap, type. Tap Stop (here or in the notification) when done.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                     rec.finishedSteps != null -> {
-                        val steps = rec.finishedSteps ?: emptyList()
-                        if (steps.isNotEmpty()) {
-                            steps.take(5).forEach { step ->
+                        val finished = rec.finishedSteps ?: emptyList()
+                        if (finished.isNotEmpty()) {
+                            finished.take(5).forEach { action ->
                                 Text(
-                                    "• ${step.describe()}",
+                                    "• ${action.describe()}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            if (steps.size > 5) Text("… +${steps.size - 5} more", style = MaterialTheme.typography.bodySmall)
+                            if (finished.size > 5) Text("… +${finished.size - 5} more", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text(
+                                "Nothing was captured. The app probably doesn't report taps to accessibility - " +
+                                    "build it with 'New skill' → 'Pick on screen' instead.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Danger,
+                            )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
                                 onClick = {
-                                    com.jarvis.mobile.core.skills.GrillMeEngine.start(steps)
+                                    com.jarvis.mobile.core.skills.GrillMeEngine.startFinished(finished)
                                     openTab("grill_me")
                                 },
+                                enabled = finished.isNotEmpty(),
                                 modifier = Modifier.weight(1f),
                             ) { Text("/grill-me") }
                             OutlinedButton(
@@ -157,10 +185,12 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                                     SkillDraftBus.draft.value = SkillDefinition(
                                         id = SkillStore.newId(),
                                         name = "My skill",
-                                        steps = steps,
+                                        actions = finished,
+                                        source = "RECORDED",
                                     )
-                                    openTab("skill_draft")
+                                    openTab("skill_builder")
                                 },
+                                enabled = finished.isNotEmpty(),
                                 modifier = Modifier.weight(1f),
                             ) { Text("Review & edit") }
                         }
@@ -169,113 +199,25 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                         }
                     }
                     else -> {
-                        if (!com.jarvis.mobile.accessibility.JarvisAccessibilityService.CONNECTED.value) {
+                        val a11yOn = com.jarvis.mobile.accessibility.JarvisAccessibilityService.CONNECTED.value
+                        if (!a11yOn) {
                             Text(
                                 "⚠ Enable JARVIS in Settings → Accessibility first - recording needs it.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Danger,
                             )
                         }
-                        Button(
+                        OutlinedButton(
                             onClick = { showRecordStart = true },
-                            enabled = AgentEngine.isRunning().not(),
+                            enabled = a11yOn && AgentEngine.isRunning().not(),
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Record a skill") }
+                        ) { Text("Quick record") }
                         Text(
-                            "You choose where to start: the home screen or any app. A red REC bubble floats over everything with a live step counter, and every tap and drag you make is drawn on screen as red ink - you always SEE what is being recorded. Come back and tap Stop when done.",
+                            "Captures what apps report (buttons, fields, scrolls, app switches) and shows each capture " +
+                                "the moment it lands. For games/canvas apps use 'New skill' → 'Pick on screen'.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                }
-            }
-        }
-
-        // ------------------------------------------------- precision setup row
-        if (selfhost.status == SelfHostShell.Status.READY || shizuku.status == ShizukuBridge.Status.READY) {
-            Text(
-                when {
-                    selfhost.status == SelfHostShell.Status.READY ->
-                        "Built-in precision shell ready - every tap records with exact coordinates. No other app involved."
-                    else -> "Shizuku connected - precision touch capture is available on this device."
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = com.jarvis.mobile.ui.theme.Ok,
-            )
-        } else {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Record EVERY tap - even in games and canvas apps", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "One-time setup: JARVIS pairs with this phone's own Wireless debugging and starts its own privileged " +
-                            "shell from inside the app - nothing else to install. Afterwards, the raw touchscreen stream is " +
-                            "recorded with exact coordinates and every tap/drag is drawn on screen while you record.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    when (selfhost.status) {
-                        SelfHostShell.Status.PAIRED -> Text(
-                            "Paired - tap Connect to start the built-in shell.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        SelfHostShell.Status.CONNECTING -> Text(
-                            "Connecting: ${selfhost.reason}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        SelfHostShell.Status.ERROR -> Text(
-                            selfhost.reason,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Danger,
-                        )
-                        else -> Unit
-                    }
-                    Button(onClick = { showSelfHostSetup = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            when (selfhost.status) {
-                                SelfHostShell.Status.PAIRED -> "Connect built-in shell"
-                                else -> "Set up (built-in, no other app)"
-                            },
-                        )
-                    }
-                    androidx.compose.material3.TextButton(
-                        onClick = { showShizukuRow = !showShizukuRow },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (showShizukuRow) "Hide the Shizuku app option" else "Prefer the Shizuku app instead?",
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                    if (showShizukuRow) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    runCatching {
-                                        val i = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-                                        if (i != null) context.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                                        else context.startActivity(
-                                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/"))
-                                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                                        )
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) { Text(if (shizuku.status == ShizukuBridge.Status.NOT_INSTALLED) "Get Shizuku" else "Open Shizuku") }
-                            OutlinedButton(
-                                onClick = {
-                                    ShizukuBridge.refresh()
-                                    ShizukuBridge.requestPermission()
-                                },
-                                enabled = shizuku.status == ShizukuBridge.Status.NOT_AUTHORIZED || shizuku.status == ShizukuBridge.Status.READY,
-                                modifier = Modifier.weight(1f),
-                            ) { Text("Connect") }
-                        }
                     }
                 }
             }
@@ -296,7 +238,7 @@ fun SkillsScreen(openTab: (String) -> Unit) {
         // -------------------------------------------------------- saved skills
         if (skills.isEmpty()) {
             Text(
-                "No skills saved yet. Record one above - then run it any time with one tap.",
+                "No skills yet. Build one above - then run it any time with one tap.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -311,6 +253,9 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(skill.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                         SourceBadge(skill.source)
+                        skill.lastRunOk?.let { ok ->
+                            Text(if (ok) "✓" else "✗", color = if (ok) Ok else Danger, style = MaterialTheme.typography.titleMedium)
+                        }
                     }
                     if (skill.description.isNotBlank()) {
                         Text(
@@ -321,7 +266,7 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                         )
                     }
                     Text(
-                        "${skill.steps.size} steps · run ${skill.runCount}x" +
+                        "${skill.stepList().size} actions · run ${skill.runCount}x" +
                             (skill.lastRunAtMs?.let { " · last ${java.text.SimpleDateFormat("MMM d", java.util.Locale.US).format(it)}" } ?: "") +
                             (skill.trigger?.let { " · ${it.describe()}" } ?: ""),
                         style = MaterialTheme.typography.labelSmall,
@@ -334,13 +279,30 @@ fun SkillsScreen(openTab: (String) -> Unit) {
                             modifier = Modifier.weight(1f),
                         ) { Text("Run") }
                         OutlinedButton(
-                            onClick = { SkillDraftBus.draft.value = skill; openTab("skill_draft") },
+                            onClick = { SkillDraftBus.draft.value = skill; openTab("skill_builder") },
                             modifier = Modifier.weight(1f),
                         ) { Text("Edit") }
                         OutlinedButton(
                             onClick = { confirmDelete = skill.id },
                             modifier = Modifier.weight(1f),
                         ) { Text("Delete", color = Danger) }
+                    }
+                    if (skill.lastRunLog.isNotEmpty()) {
+                        Text(
+                            if (expandedLog == skill.id) "Hide last run ▲" else "Last run log ▼",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Accent,
+                            modifier = Modifier.clickable { expandedLog = if (expandedLog == skill.id) null else skill.id },
+                        )
+                        if (expandedLog == skill.id) {
+                            skill.lastRunLog.forEach { line ->
+                                Text(
+                                    line,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                     skill.notes.takeIf { it.isNotBlank() }?.let {
                         Text(
@@ -359,7 +321,7 @@ fun SkillsScreen(openTab: (String) -> Unit) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmDelete = null },
             title = { Text("Delete skill?") },
-            text = { Text("The recording and its interview notes are removed from this phone. Cannot be undone.") },
+            text = { Text("The skill and its run log are removed from this phone. Cannot be undone.") },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     TimeTriggerScheduler.cancel(context, id)
@@ -380,15 +342,15 @@ fun SkillsScreen(openTab: (String) -> Unit) {
             onStarted = { showRecordStart = false },
         )
     }
-
-    if (showSelfHostSetup) {
-        SelfHostSetupDialog(onDismiss = { showSelfHostSetup = false })
-    }
 }
 
 @Composable
 private fun SourceBadge(source: String) {
-    val (label, color) = if (source == "GRILLED") ("/grill-me" to Accent) else ("recorded" to Color(0xFF8A8A8E))
+    val (label, color) = when (source) {
+        "GRILLED" -> "/grill-me" to Accent
+        "RECORDED" -> "recorded" to Color(0xFF8A8A8E)
+        else -> "built" to Ok
+    }
     Text(
         label,
         style = MaterialTheme.typography.labelSmall,

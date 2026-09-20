@@ -3,6 +3,52 @@
 All notable changes to JARVIS. Versions are tagged on GitHub Releases; the release APK
 is attached to each release and delivered via Telegram.
 
+## [2.3.0] - Skills v3: the MacroDroid-grounded rebuild (rescrap)
+
+Four versions in a row shipped a different touch-capture mechanism and every one failed on a
+real device ("records nothing"). v2.3 stops iterating on capture and rebuilds the skill system
+bottom-up on the model that actually works: **the MacroDroid model** - declarative actions,
+deliberate targeting, honest verification. Full research + architecture: `docs/SKILLS_V3.md`.
+
+- **RESCRAP - the entire privilege-machinery capture stack is deleted**: Shizuku bridge + shell
+  + UserService, the in-app ADB pairing stack (SPAKE2/TLS/BoringSSL + `app_process` server),
+  the `getevent` touch-stream recorder, the raw-tap merger, the red-ink overlay and the whole
+  "precision setup" UI. No skill feature depends on root, Shizuku, ADB, or Wireless debugging
+  anymore - nothing left that can silently degrade.
+- **Skill = trigger + ordered ACTIONS** (`SkillAction`): Open app · Tap · Long-press · Type
+  text · Scroll (direction + pages) · Back · Home · Recents · Wait · Notify - every one backed
+  exclusively by public APIs, chosen from a catalog in the new **Skill builder** screen.
+- **"Pick on screen" - targeting that works in EVERY app**: JARVIS screenshots the screen
+  (public accessibility screenshot API), you tap the exact spot on the screenshot, JARVIS
+  probes the accessibility windows for the node under your finger to prefill label/id/desc,
+  and the target stores FRACTIONAL coordinates (0..1 of screen) - so rotation, DPI and device
+  changes can no longer shift a recorded tap. This replaces raw-touch capture for games and
+  canvas apps.
+- **Runner rebuilt on AutoX-proven techniques**: wait-for-element polling (60 ms, 8 s deadline)
+  before acting; node-first `performAction` with an awaited `dispatchGesture` fallback;
+  per-action verification (screen-fingerprint change); an app guard that refuses to tap
+  another app's coordinates (the v1/v2 package gate was dead code); one honest retry; then a
+  stop instead of guessing through a changed UI.
+- **Run log**: every action appends `✓/✗ what - why` to the skill itself; the Skills screen
+  shows the last run's log and a ✓/✗ badge. Failures are diagnosable, not mysterious.
+- **Per-action "Test" button** in the builder: run one action in place and see the result
+  before you save the skill.
+- **Quick record (demoted to secondary, rewritten honestly)**: captures what apps REPORT
+  (clicks, text, scrolls, app switches), confirms every capture live in the REC bubble
+  ("✓ Tap \"Send\""), counts and surfaces taps the app did not report ("this app isn't
+  reporting taps - use Pick on screen"), records the opening app as a real action (the old
+  code never did), derives scroll direction from the event, skips password fields instead of
+  recording a fake literal, hard-gates Start on the accessibility service being enabled, and
+  raises a watchdog warning when nothing is being captured.
+- **Migration**: every pre-2.3 saved skill still loads - legacy `steps` parse and migrate to
+  actions transparently (`stepsToActions`), including the scroll-direction fix (`fwd`→`down`).
+  /grill-me keeps working on top of the new model.
+- **Replay bug fixes carried over from the audit**: the app switch into the target app is now
+  part of the skill; replay pacing settles between actions; typing no longer falls into "any
+  editable field" blindly (it prefers the recorded field and guards the app).
+- Build: BoringSSL prefab + SPAKE2 JNI target + Shizuku deps removed; AIDL removed; APK gets
+  smaller and the native surface is llama.cpp only again.
+
 ## [2.2.0] - Real-key-verified cloud AI, per-provider key vault, Discord notifications
 
 - **Every model slug in the provider presets is now verified LIVE before shipping.** The v1.9-era

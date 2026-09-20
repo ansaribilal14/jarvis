@@ -126,13 +126,13 @@ object TriggerEngine {
         val title = extras.substringAfter("title=").substringBefore("; text=")
         val text = extras.substringAfter("text=", "")
         var used = false
-        val steps = skill.steps.map { step ->
-            if (step.type != "TEXT" || step.input.isNullOrBlank()) return@map step
-            val input = step.input
-            if (!input.contains("{{title}}") && !input.contains("{{text}}")) return@map step
+        val actions = skill.stepList().map { action ->
+            if (action.type != "UI_TEXT" || action.input.isNullOrBlank()) return@map action
+            val input = action.input!!
+            if (!input.contains("{{title}}") && !input.contains("{{text}}")) return@map action
             used = true
-            step.copy(input = input.replace("{{title}}", title).replace("{{text}}", text))
+            action.copy(input = input.replace("{{title}}", title).replace("{{text}}", text))
         }
-        return if (used) skill.copy(steps = steps) else skill
+        return if (used) skill.copy(actions = actions) else skill
     }
 }

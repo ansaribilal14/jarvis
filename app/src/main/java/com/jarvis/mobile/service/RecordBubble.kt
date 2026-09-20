@@ -25,11 +25,12 @@ import kotlinx.coroutines.launch
 /**
  * Floating REC pill (AutoX-style overlay controls): shown while a recording is
  * active, draggable, ALWAYS on top so the user sees proof that capture is live
- * from any app. Two layers of feedback:
- *  - the pill shows the live step count (every captured tap increments it), so
- *    "is it recording?" is answered at a glance instead of blind trust;
- *  - tapping it expands a compact card with the honest capture-layer status and
- *    a Stop button (the recorder notification keeps its own stop action too).
+ * from any app. Skills-v3 feedback layers:
+ *  - the pill shows the live action count AND the most recent capture
+ *    ("REC 3 · Tap \"Send\"") - every capture is confirmed the moment it lands,
+ *    so "is it recording?" is answered at a glance instead of blind trust;
+ *  - tapping the pill expands a compact card with the honest capture status,
+ *    any warnings (e.g. "this app is not reporting taps") and a Stop button.
  *
  * Views are attached from the application context with TYPE_APPLICATION_OVERLAY
  * (the same window type AutoX's floating menu uses); the process is guaranteed
@@ -45,6 +46,7 @@ object RecordBubble {
 
     private var pill: LinearLayout? = null
     private var pillLabel: TextView? = null
+    private var pillLast: TextView? = null
     private var expanded: LinearLayout? = null
     private var statusView: TextView? = null
     private var stepsView: TextView? = null
@@ -63,8 +65,14 @@ object RecordBubble {
                 main.post {
                     if (pill == null) return@post
                     pillLabel?.text = "REC ${st.steps.size}"
+                    pillLast?.text = when {
+                        st.lastCapture != null -> st.lastCapture
+                        st.suspectNoCapture -> "nothing captured yet?"
+                        else -> ""
+                    }
+                    pillLast?.visibility = if (st.lastCapture != null || st.suspectNoCapture) View.VISIBLE else View.GONE
                     statusView?.text = statusText(st)
-                    stepsView?.text = "${st.steps.size} steps captured"
+                    stepsView?.text = stepsText(st)
                 }
             }
         }
@@ -77,6 +85,47 @@ object RecordBubble {
             pill?.let { runCatching { wm().removeView(it) } }
             pill = null
             pillLabel = null
+            pillLast = null
+        }
+    }
+
+    /** Auto-fading instruction card shown right after the recording starts. */
+    fun showInstructions(context: Context, title: String, body: String) {
+        if (!android.provider.Settings.canDrawOverlays(context)) return
+        main.post {
+            runCatching {
+                val density = context.resources.displayMetrics.density
+                fun dp(v: Int) = (v * density).toInt()
+
+                val card = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(18), dp(14), dp(18), dp(14))
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(18).toFloat()
+                        setColor(0xEE12161C.toInt())
+                        setStroke(dp(1), 0xFFE4574F.toInt())
+                    }
+                }
+                val t = TextView(context).apply {
+                    text = title; setTextColor(Color.WHITE); textSize = 15f
+                }
+                val b = TextView(context).apply {
+                    text = body; setTextColor(0xFFC9D4DB.toInt()); textSize = 12f
+                    setPadding(0, dp(6), 0, 0)
+                }
+                card.addView(t); card.addView(b)
+
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                    PixelFormat.TRANSLUCENT,
+                ).apply { gravity = Gravity.TOP or Gravity.FILL_HORIZONTAL; y = dp(48) }
+
+                wm().addView(card, params)
+                main.postDelayed({ runCatching { wm().removeView(card) } }, 6_500)
+            }.onFailure { Logx.w(TAG, "instructions card failed: ${it.message}") }
         }
     }
 
@@ -101,14 +150,17 @@ object RecordBubble {
                 y = dp(96)
             }
 
-            val row = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
+            val col = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
                 background = GradientDrawable().apply {
                     cornerRadius = dp(20).toFloat()
                     setColor(0xE612161C.toInt())
                     setStroke(dp(1), 0xFFE4574F.toInt())
                 }
                 setPadding(dp(10), dp(6), dp(12), dp(6))
+            }
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
             val dot = View(context).apply {
@@ -122,9 +174,16 @@ object RecordBubble {
             }
             row.addView(dot)
             row.addView(label)
+            val last = TextView(context).apply {
+                setTextColor(0xFF93A5AF.toInt())
+                textSize = 11f
+                visibility = View.GONE
+            }
+            col.addView(row)
+            col.addView(last)
 
             var downX = 0f; var downY = 0f; var moved = false
-            row.setOnTouchListener { v, ev ->
+            col.setOnTouchListener { v, ev ->
                 when (ev.action) {
                     MotionEvent.ACTION_DOWN -> { downX = ev.rawX; downY = ev.rawY; moved = false; true }
                     MotionEvent.ACTION_MOVE -> {
@@ -140,19 +199,28 @@ object RecordBubble {
                 }
             }
 
-            wm().addView(row, params)
-            pill = row
+            wm().addView(col, params)
+            pill = col
             pillLabel = label
+            pillLast = last
             Logx.i(TAG, "REC bubble shown")
         }.onFailure { Logx.w(TAG, "bubble attach failed: ${it.message}"); started = false }
     }
 
-    private fun statusText(st: SkillRecorder.RecordingState): String = when {
-        st.precisionActive ->
-            "Precision touch capture LIVE - every tap in every app is recorded (${st.rawTaps} raw touches seen). Every tap and drag is drawn on screen."
+    private fun statusText(st: SkillRecorder.RecState): String = when {
+        st.suspectNoCapture ->
+            "Nothing captured yet - this app (or the accessibility service) is not reporting events. " +
+                "Use 'Pick on screen' in the skill builder instead."
+        st.unusableEvents >= 3 ->
+            "This app is not reporting taps (${st.unusableEvents} missed). Buttons it does report still capture. " +
+                "For tap-by-tap anywhere, build the skill with 'Pick on screen'."
         else ->
-            "App-event capture - buttons, typing, scrolls, app switches. For raw-tap precision + ink visualization, set up the built-in shell (Skills screen) - no other app needed."
+            "App-event capture - buttons, typing, scrolls, app switches are confirmed here as they land. " +
+                "Games/canvas apps often report nothing - use 'Pick on screen' for those."
     }
+
+    private fun stepsText(st: SkillRecorder.RecState): String =
+        "${st.steps.size} actions captured" + if (st.unusableEvents > 0) " · ${st.unusableEvents} taps not reportable by this app" else ""
 
     private fun toggleExpand(context: Context) {
         if (expanded != null) { collapse(); return }
@@ -177,7 +245,7 @@ object RecordBubble {
             val steps = TextView(context).apply {
                 setTextColor(0xFF93A5AF.toInt())
                 textSize = 12f
-                text = "${SkillRecorder.state.value.steps.size} steps captured"
+                text = stepsText(SkillRecorder.state.value)
                 setPadding(0, dp(4), 0, 0)
             }
             val stop = TextView(context).apply {

@@ -21,23 +21,11 @@
 
 Users accept the respective model licenses when downloading them in-app.
 
-## Shizuku (v2.0 - precision touch capture bridge)
-| Component | License | Source |
-|---|---|---|
-| dev.rikka.shizuku:api / :provider 13.1.5 | Apache-2.0 | github.com/RikkaApps/Shizuku-api |
-Used to read the raw touchscreen stream (`getevent -t`) under the shell identity (root-free),
-the technique AutoX implements with root. Manifest provider + API permission declared; no Shizuku
-code is copied - consumed as Maven artifacts.
-
-## Built-in privileged shell (v2.1 - the no-other-app Shizuku replacement)
-| Component | License | Source |
-|---|---|---|
-| io.github.vvb2060.ndk:boringssl (prefab, native only) | Apache-2.0 / OpenSSL-style | github.com/vvb2060/boringssl-android |
-| ADB pairing / protocol client adaptation | Apache-2.0 | github.com/wuyr/jdwp-injector-for-android (AdbClient.kt, AdbWirelessPairing.kt, AdbWirelessPortResolver.kt - adapted, keys/certs replaced with per-install generated identity) |
-The AOSP wireless-debugging pairing protocol implementation (SPAKE2 + HKDF + AES-GCM PeerInfo,
-TLS 1.3 adbd connection) is adapted from the wuyr project under Apache-2.0; the hardcoded demo
-keypair/certificate were replaced by a per-install generated RSA identity (see
-`core/adb/AdbKeyStore.kt`). SPAKE2/HKDF primitives come from BoringSSL via the vvb2060 prefab.
+## Removed components (v2.3)
+The v2.0-v2.1 privileged capture stack (Shizuku api/provider 13.1.5, io.github.vvb2060.ndk:boringssl,
+ADB pairing adaptation from wuyr/jdwp-injector-for-android) powered the touch-capture mechanisms
+removed in v2.3 (see docs/SKILLS_V3.md) and is no longer part of the app; the notices above are
+kept for the historical releases that shipped it.
 
 ## Design references studied (no code copied)
 Google ARTEMIS, awesome-local-ai-android, shadergradient, liquid-logo,
@@ -46,3 +34,7 @@ v2.0 research set: OpenTasker, Easer, AutoX (+2 forks), argus, MobileAgent - mec
 in CHANGELOG 2.0.0 (Shizuku getevent capture = AutoX's root technique; trigger engine shape =
 OpenTasker/Easer; `{{title}}`/`{{text}}` dynamics = Easer DynamicsLink; capability-bus discipline
 = argus). No source code was copied from any of them.
+v2.3 research set: MacroDroid's macro model (trigger/action/constraint builder, no touch
+recording - the design's foundation), AutoX's node-click/gesture-latch/wait-for-element
+patterns (public-API click mechanics), OpenTasker's honest-action doctrine, Tasker+AutoInput's
+single-element capture precedent. Ideas only - no code copied.

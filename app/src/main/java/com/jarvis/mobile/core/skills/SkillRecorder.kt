@@ -1,6 +1,7 @@
 package com.jarvis.mobile.core.skills
 
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,6 +9,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.jarvis.mobile.JarvisApp
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.CoroutineScope
@@ -15,620 +17,368 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * Skill recorder: turns the user's live UI actions into replayable [SkillStep]s.
+ * Skills v3 live capture (docs/SKILLS_V3.md section 3.3, secondary path).
  *
- * v2.0 - Layered capture (v1.9's motionEventSources consumed touches; v1.10's
- * TouchInteractionController depended on touch-exploration semantics that most
- * ROMs never deliver without hijacking the tap - both reported "records
- * nothing" on real devices). The capture stack now NEVER intercepts or alters
- * a user interaction, and no flag can silence the fallback:
+ * The v3 doctrine: capture is a CONVENIENCE, never a load-bearing privilege.
+ * This recorder turns what apps voluntarily REPORT - view clicks, long-clicks,
+ * text changes, scrolls, app switches - into [SkillAction]s, with none of the
+ * v1/v2 machinery that tried (and failed four times) to observe raw touches:
+ * no motionEventSources, no TouchInteractionController, no Shizuku getevent,
+ * no in-app ADB. For apps that report nothing, the answer is the builder's
+ * "Pick on screen" flow (screenshot + point), not more privilege machinery.
  *
- * 1. PRECISION TOUCH (primary, all Android versions): the raw kernel touch
- *    stream (`getevent -t`) read through Shizuku (shell identity, root-free -
- *    the AutoX-root technique). Every contact in every app with real screen
- *    coordinates; taps, long-presses and swipes are classified from the
- *    stream; the user's touches are observed, never consumed.
- * 2. APP EVENTS (all devices, always): TYPE_VIEW_CLICKED / LONG_CLICKED give
- *    semantic labels, TYPE_VIEW_TEXT_CHANGED gives typed content, list scrolls
- *    and app switches are captured too.
- *
- * A pure-JVM [RawTapMerger] fuses the layers: a raw DOWN plus a matching click
- * event within [RawTapMerger.windowMs] becomes ONE semantic step with real
- * coordinates; a raw DOWN that no event claims commits as a coordinate TAP.
- *
- * The recording session is PERSISTED (active flag + JSONL step file), so an
- * aggressive ROM killing the process mid-recording no longer wipes it - the
- * service resumes on rebind. JARVIS's own actions are suppressed via [suppress];
- * JARVIS itself and the system shade are filtered.
+ * Every capture is instantly visible (state.lastCapture + the REC bubble) and
+ * every un-reportable tap is counted and surfaced - silence is impossible.
  */
 object SkillRecorder {
     private const val TAG = "skill-rec"
-    private const val NOTIF_ID = 4242
-    private const val MAX_STEPS = 120
-    private const val PREFS = "skill_recorder_session"
+    private const val NOTIFICATION_ID = 10010
+    const val ACTION_STOP = "com.jarvis.mobile.STOP_SKILL_RECORDING"
+    const val MAX_STEPS = 200
 
-    data class RecordingState(
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    data class RecState(
         val active: Boolean = false,
-        val steps: List<SkillStep> = emptyList(),
-        val finishedSteps: List<SkillStep>? = null, // set after stop - pending review
-        val startedAtMs: Long = 0L,
-        /** True when the precision touch stream is delivering (Shizuku). */
-        val precisionActive: Boolean = false,
-        /** Raw touch DOWNs seen this session - live proof that capture works. */
-        val rawTaps: Int = 0,
-        /** Honest capture description for the UI: what IS being recorded right now. */
-        val captureLayer: String = "EVENTS",
+        val steps: List<SkillAction> = emptyList(),
+        val finishedSteps: List<SkillAction>? = null,
+        val eventsSeen: Int = 0,          // every candidate event that arrived
+        val unusableEvents: Int = 0,      // events with no node/bounds (app hides controls)
+        val lastCapture: String? = null,  // instant feedback: "Tapped \"Send\""
+        val warnings: List<String> = emptyList(),
+        val suspectNoCapture: Boolean = false, // watchdog: in-app, no events for a while
+        val currentApp: String? = null,
     )
 
-    private val _state = MutableStateFlow(RecordingState())
-    val state: StateFlow<RecordingState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(RecState())
+    val state: StateFlow<RecState> = _state.asStateFlow()
 
-    /** True while the agent or a skill replay performs actions - events then are OURS, not the user's. */
+    /** Agent replays / the grill-me interview must not record themselves. */
     @Volatile var suppress: Boolean = false
 
-    @Volatile private var lastTextKey: String? = null
-    @Volatile private var lastTextAtMs: Long = 0L
-    @Volatile private var lastScrollAtMs: Long = 0L
-    @Volatile private var lastPkg: String? = null
+    private var steps = mutableListOf<SkillAction>()
+    private var startedAtMs = 0L
+    private var lastWindowPkg: String? = null
+    private var lastStepKey: Pair<String, Long>? = null // (type+label, time) dedup window
+    private var scope: CoroutineScope? = null
+    private var prefs: SharedPreferences? = null
 
-    /** Most recent precision-capture DOWN (px) - direction math for stream gestures. */
-    @Volatile private var lastRawDown: Pair<Int, Int>? = null
-
-    /** Called by [TouchStreamRecorder] before classifying a gesture. */
-    fun lastRawDownPx(): Pair<Int, Int>? = lastRawDown
-
-    private val json = Json { ignoreUnknownKeys = true }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val stateLock = Any()
-
-    private val merger = RawTapMerger()
-
-    // ------------------------------------------------------------- persistence
-
-    private fun prefs(): SharedPreferences =
-        JarvisApp.instance.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-    private fun sessionFile(): File = File(JarvisApp.instance.filesDir, "skills/.session.jsonl")
-
-    private fun setPersistedActive(active: Boolean) {
-        runCatching { prefs().edit().putBoolean("active", active).apply() }
-    }
-
-    private fun appendStepToFile(step: SkillStep) {
-        runCatching {
-            sessionFile().parentFile?.mkdirs()
-            sessionFile().appendText(json.encodeToString(SkillStep.serializer(), step) + "\n")
-        }.onFailure { Logx.w(TAG, "session append failed: ${it.message}") }
-    }
-
-    private fun loadStepsFromFile(): List<SkillStep> = runCatching {
-        sessionFile().readLines().filter { it.isNotBlank() }
-            .mapNotNull { runCatching { json.decodeFromString(SkillStep.serializer(), it) }.getOrNull() }
-    }.getOrDefault(emptyList())
-
-    private fun clearSessionFile() {
-        runCatching { sessionFile().delete() }
-    }
-
-    /**
-     * Resume a recording that survived a process kill: the persisted active
-     * flag says the user believes they are recording; reload the steps taken
-     * so far and keep going. Called from the service on connect.
-     */
-    fun resumeIfNeeded(): Boolean {
-        val wasActive = runCatching { prefs().getBoolean("active", false) }.getOrDefault(false)
-        if (!wasActive || _state.value.active) return false
-        val steps = loadStepsFromFile()
-        _state.value = RecordingState(active = true, steps = steps, startedAtMs = System.currentTimeMillis())
-        postNotification(JarvisApp.instance, steps.size)
-        // Precision capture died with the old process - re-arm it now.
-        JarvisAccessibilityServiceHolder.precisionEnable?.invoke()
-        com.jarvis.mobile.service.RecordBubble.show(JarvisApp.instance)
-        Logx.i(TAG, "Recording resumed after restart: ${steps.size} steps")
-        return true
-    }
-
-    // ------------------------------------------------------------------ control
+    // ------------------------------------------------------------- lifecycle
 
     fun start() {
-        clearSessionFile()
-        synchronized(stateLock) {
-            _state.value = RecordingState(active = true, startedAtMs = System.currentTimeMillis())
-        }
-        setPersistedActive(true)
-        lastPkg = null
-        lastTextKey = null
-        suppress = false
-        merger.reset()
-        // Arm precision touch capture (Shizuku touch stream); safe no-op + honest
-        // fallback status when unavailable.
-        JarvisAccessibilityServiceHolder.precisionEnable?.invoke()
-        postNotification(JarvisApp.instance, 0)
-        com.jarvis.mobile.service.RecordBubble.show(JarvisApp.instance)
-        Logx.i(TAG, "Recording started")
+        if (_state.value.active) return
+        val ctx = JarvisApp.instance
+        prefs = ctx.getSharedPreferences("skill_recorder_session", Context.MODE_PRIVATE)
+        steps = mutableListOf()
+        startedAtMs = System.currentTimeMillis()
+        lastWindowPkg = null
+        lastStepKey = null
+        sessionFile(ctx).delete()
+        prefs!!.edit().putBoolean("active", true).apply()
+        _state.value = RecState(active = true, currentApp = currentApp())
+        startWatchdog()
+        postNotification(ctx)
+        RecordBubble.show(ctx)
+        Logx.i(TAG, "Recording started (app-event capture)")
     }
 
-    /** Stop recording; steps stay in [RecordingState.finishedSteps] until reviewed/discarded. */
     fun stop() {
-        var cur = _state.value
-        if (!cur.active && runCatching { prefs().getBoolean("active", false) }.getOrDefault(false)) {
-            // Fresh process (ROM killed us mid-recording) + the user pressed
-            // "Stop" before the service reconnected: load the session first.
-            resumeIfNeeded()
-            cur = _state.value
-        }
-        if (!cur.active) return
-        // Restore normal touch BEFORE anything else - recording state must never
-        // keep the touch pipeline interposed.
-        JarvisAccessibilityServiceHolder.precisionDisable?.invoke()
-        com.jarvis.mobile.service.RecordBubble.hide(JarvisApp.instance)
-        val flushed = merger.flush()
-        val live = synchronized(stateLock) { _state.value.steps }
-        val steps = (if (live.isEmpty()) loadStepsFromFile() else live) + flushed
-        synchronized(stateLock) {
-            _state.value = _state.value.copy(active = false, steps = steps, finishedSteps = steps, precisionActive = false)
-        }
-        setPersistedActive(false)
-        clearSessionFile()
-        cancelNotification(JarvisApp.instance)
-        Logx.i(TAG, "Recording stopped: ${steps.size} steps")
-    }
-
-    /** Review consumed (saved or discarded) - clears the finished buffer. */
-    fun consumeFinished() {
-        synchronized(stateLock) {
-            _state.value = _state.value.copy(finishedSteps = null)
-        }
+        if (!_state.value.active) return
+        val ctx = JarvisApp.instance
+        scope?.cancel(); scope = null
+        val captured = steps.toList()
+        prefs?.edit()?.putBoolean("active", false)?.apply()
+        sessionFile(ctx).delete()
+        cancelNotification(ctx)
+        RecordBubble.hide(ctx)
+        _state.value = _state.value.copy(
+            active = false, finishedSteps = captured, suspectNoCapture = false,
+            lastCapture = null, warnings = _state.value.warnings,
+        )
+        Logx.i(TAG, "Recording stopped: ${captured.size} actions")
     }
 
     fun discard() {
-        synchronized(stateLock) {
-            _state.value = _state.value.copy(finishedSteps = null, steps = emptyList())
-        }
+        val ctx = JarvisApp.instance
+        scope?.cancel(); scope = null
+        steps = mutableListOf()
+        prefs?.edit()?.putBoolean("active", false)?.apply()
+        sessionFile(ctx).delete()
+        cancelNotification(ctx)
+        RecordBubble.hide(ctx)
+        _state.value = RecState()
     }
 
-    /** Called by the touch-stream recorder when precision capture is delivering events. */
-    fun setPrecision(on: Boolean, layer: String? = null) {
-        synchronized(stateLock) {
-            if (_state.value.precisionActive != on) {
-                _state.value = _state.value.copy(
-                    precisionActive = on,
-                    captureLayer = if (on) {
-                        when (layer) {
-                            "built_in" -> "PRECISION (built-in shell)+EVENTS"
-                            "shizuku" -> "PRECISION (Shizuku)+EVENTS"
-                            else -> "PRECISION+EVENTS"
-                        }
-                    } else "EVENTS",
-                )
-                Logx.i(TAG, if (on) "Precision touch capture ACTIVE - every tap is recorded"
-                             else "Precision touch capture unavailable - app-event capture only")
+    /** Process-death recovery: reload captured steps and keep recording. */
+    fun resumeIfNeeded() {
+        val ctx = JarvisApp.instance
+        val p = ctx.getSharedPreferences("skill_recorder_session", Context.MODE_PRIVATE)
+        prefs = p
+        if (!p.getBoolean("active", false) || _state.value.active) return
+        val f = sessionFile(ctx)
+        if (f.exists()) {
+            runCatching {
+                steps = f.readLines().filter { it.isNotBlank() }
+                    .mapNotNull { line -> runCatching { json.decodeFromString<SkillAction>(line) }.getOrNull() }
+                    .toMutableList()
+            }.onFailure {
+                steps = mutableListOf()
+                Logx.w(TAG, "session restore failed: ${it.message}")
             }
         }
+        startedAtMs = System.currentTimeMillis()
+        _state.value = RecState(active = true, steps = steps.toList(), currentApp = currentApp())
+        startWatchdog()
+        postNotification(ctx)
+        RecordBubble.show(ctx)
+        Logx.i(TAG, "Recording resumed after process death (${steps.size} actions kept)")
     }
 
-    // ------------------------------------------------- precision touch layer (34+)
+    // ------------------------------------------------------------ event feed
 
-    /**
-     * A physical touch DOWN was observed (after the service already delegated the
-     * interaction back to the system, so the user's tap behaves 100% normally).
-     * Registered as a pending tap; merged with a matching click event if one
-     * arrives, else committed as a coordinate TAP after the merge window.
-     */
-    fun onRawDown(downAtMs: Long, x: Float, y: Float) {
-        val st = _state.value
-        if (!st.active || suppress) return
-        val pkg = currentPkg()
-        if (pkg == JarvisApp.instance.packageName || pkg == "com.android.systemui") return
-        lastRawDown = x.toInt() to y.toInt()
-        val swept = merger.onRawDown(downAtMs, x.toInt(), y.toInt())
-        swept.forEach { commitRawStep(it) }
-        synchronized(stateLock) {
-            _state.value = _state.value.copy(rawTaps = _state.value.rawTaps + 1)
-        }
-        // Schedule the sweep that commits unclaimed pendings.
-        scope.launch {
-            delay(RawTapMerger.WINDOW_MS + 120)
-            merger.sweep(System.currentTimeMillis()).forEach { commitRawStep(it) }
-        }
-    }
-
-    /**
-     * A COMPLETE gesture classified from the precision stream (long-press or
-     * swipe; taps stay with the merger so a click event can still label them).
-     * The matching pending tap is cancelled first so nothing double-records.
-     */
-    fun onRawGesture(step: SkillStep) {
-        val st = _state.value
-        if (!st.active || suppress) return
-        val down = lastRawDown
-        if (down != null) merger.cancelNear(down.first, down.second)
-        lastRawDown = null
-        addStep(step.copy(pkg = step.pkg ?: currentPkg()))
-    }
-
-    private fun commitRawStep(step: SkillStep) {
-        addStep(step)
-        enrichAsync(step, step.x?.toFloat(), step.y?.toFloat())
-        lastRawDown = null
-    }
-
-    private fun currentPkg(): String? =
-        runCatching { JarvisAccessibilityServiceHolder.pkg() }.getOrNull()
-
-    /**
-     * Semantic enrichment of a raw-coordinate step: find the element under the tap
-     * point and attach its labels, so replay prefers viewId/text matching and
-     * only falls back to coordinates when the layout shifted. Runs off-main.
-     */
-    private fun enrichAsync(step: SkillStep, x: Float?, y: Float?) {
-        if (x == null || y == null) return
-        scope.launch {
-            val obs = runCatching { JarvisAccessibilityServiceHolder.observe(80) }.getOrNull() ?: return@launch
-            val el = obs.elements.firstOrNull { x >= it.left && x <= it.right && y >= it.top && y <= it.bottom }
-                ?: return@launch
-            val cur = _state.value
-            if (!cur.active) return@launch
-            val updated = step.copy(
-                viewId = el.viewId ?: step.viewId,
-                text = el.text ?: step.text,
-                desc = el.desc ?: step.desc,
-            )
-            if (updated == step) return@launch
-            synchronized(stateLock) {
-                val cur2 = _state.value
-                val idx = cur2.steps.indexOfLast { it.type == step.type && it.x == step.x && it.y == step.y }
-                if (idx >= 0) {
-                    _state.value = cur2.copy(steps = cur2.steps.toMutableList().also { it[idx] = updated })
-                }
-            }
-        }
-    }
-
-    // ------------------------------------------- accessibility-event layer
-
-    /**
-     * Event sink called from JarvisAccessibilityService for every accessibility
-     * event while recording. Click/long-click events are FUSED with pending raw
-     * taps; TEXT and APP_OPEN always come from events. JARVIS and the system UI
-     * are filtered here.
-     */
-    fun onAccessibilityEvent(e: AccessibilityEvent, selfPackage: String) {
-        val st = _state.value
-        if (!st.active || suppress) return
-        val pkg = e.packageName?.toString() ?: return
-        if (pkg == selfPackage || pkg == "com.android.systemui") return
-        val now = System.currentTimeMillis()
+    /** Called by JarvisAccessibilityService for every accessibility event. */
+    fun onAccessibilityEvent(e: AccessibilityEvent, selfPkg: String) {
+        if (!_state.value.active || suppress) return
+        val pkg = e.packageName?.toString()
+        if (pkg == selfPkg || pkg == "com.android.systemui") return
+        bump { it.copy(eventsSeen = it.eventsSeen + 1, currentApp = pkg ?: it.currentApp) }
 
         when (e.eventType) {
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                val node = e.source
-                val rect = Rect()
-                runCatching { node?.getBoundsInScreen(rect) }
-                val hasBounds = rect.width() > 0 && rect.height() > 0
-                val steps = merger.onEventClick(
-                    now = now,
-                    kind = "TAP",
-                    pkg = pkg,
-                    viewId = node?.viewIdResourceName,
-                    text = node?.text?.toString()?.take(60)?.takeIf { it.isNotBlank() },
-                    desc = node?.contentDescription?.toString()?.take(60)?.takeIf { it.isNotBlank() },
-                    x = if (hasBounds) rect.centerX() else null,
-                    y = if (hasBounds) rect.centerY() else null,
-                )
-                applyMerger(steps)
-            }
-            AccessibilityEvent.TYPE_VIEW_LONG_CLICKED -> {
-                val node = e.source
-                val rect = Rect()
-                runCatching { node?.getBoundsInScreen(rect) }
-                val hasBounds = rect.width() > 0 && rect.height() > 0
-                val steps = merger.onEventClick(
-                    now = now,
-                    kind = "LONG_PRESS",
-                    pkg = pkg,
-                    viewId = node?.viewIdResourceName,
-                    text = node?.text?.toString()?.take(60)?.takeIf { it.isNotBlank() },
-                    desc = node?.contentDescription?.toString()?.take(60)?.takeIf { it.isNotBlank() },
-                    x = if (hasBounds) rect.centerX() else null,
-                    y = if (hasBounds) rect.centerY() else null,
-                )
-                applyMerger(steps)
-            }
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
-                // Fires per character - debounce per target and keep the final text.
-                val key = "$pkg:${e.beforeText ?: ""}:${e.source?.viewIdResourceName ?: ""}"
-                if (key == lastTextKey && now - lastTextAtMs < 1500 && st.steps.lastOrNull()?.type == "TEXT") {
-                    val last = st.steps.last()
-                    val updated = last.copy(input = e.text?.joinToString("") ?: last.input)
-                    synchronized(stateLock) {
-                        val cur = _state.value
-                        _state.value = cur.copy(steps = cur.steps.dropLast(1) + updated)
-                    }
-                    lastTextAtMs = now
-                } else {
-                    lastTextKey = key
-                    lastTextAtMs = now
-                    capture(e, pkg, "TEXT")?.let { step ->
-                        addStep(step.copy(input = step.text ?: e.text?.joinToString("").orEmpty().ifBlank { null }, t = now))
-                    }
-                }
-            }
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                // The scroll event both records direction AND cancels a pending raw
-                // tap (that DOWN was the start of the fling, not a tap).
-                merger.onEventScroll(now).forEach { commitRawStep(it) }
-                if (now - lastScrollAtMs < 700) return // one fling = many events; keep one
-                lastScrollAtMs = now
-                addStep(SkillStep(type = "SCROLL", pkg = pkg, dir = "fwd", t = now))
-            }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                val newPkg = e.packageName?.toString()
-                if (newPkg != null && newPkg != lastPkg && newPkg != pkgOf(st.steps.lastOrNull())) {
-                    lastPkg = newPkg
-                    if (st.steps.isNotEmpty()) {
-                        addStep(SkillStep(type = "APP_OPEN", pkg = newPkg, t = now))
-                    }
-                }
-            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> onWindowChange(pkg)
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> onNodeEvent("UI_CLICK", "Tap", e.source)
+            AccessibilityEvent.TYPE_VIEW_LONG_CLICKED -> onNodeEvent("UI_LONG_PRESS", "Long-press", e.source)
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> onTextEvent(e.source, e.text)
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> onScrollEvent(e)
         }
     }
 
-    /** Commit merger outputs: replacements update the matching committed step in place. */
-    private fun applyMerger(steps: List<RawTapMerger.Out>) {
-        steps.forEach { out ->
-            when (out) {
-                is RawTapMerger.Out.Add -> addStep(out.step)
-                is RawTapMerger.Out.Replace -> synchronized(stateLock) {
-                    val cur = _state.value
-                    val idx = cur.steps.indexOfFirst { it === out.old || (it.t == out.old.t && it.x == out.old.x && it.y == out.old.y && it.type == out.old.type) }
-                    if (idx >= 0) _state.value = cur.copy(steps = cur.steps.toMutableList().also { it[idx] = out.new })
-                }
-            }
-        }
-    }
-
-    private fun pkgOf(step: SkillStep?): String? = step?.pkg
-
-    private fun capture(e: AccessibilityEvent, pkg: String, type: String): SkillStep? {
-        val node = e.source ?: return if (type == "TEXT") null else SkillStep(type = type, pkg = pkg)
-        val rect = Rect()
-        runCatching { node.getBoundsInScreen(rect) }
-        val text = node.text?.toString()?.take(60)?.takeIf { it.isNotBlank() }
-        val desc = node.contentDescription?.toString()?.take(60)?.takeIf { it.isNotBlank() }
-        val viewId = node.viewIdResourceName
-        val center = if (rect.width() > 0 && rect.height() > 0) rect.centerX() to rect.centerY() else null
-        // Never record password content - the typed text is masked by design.
-        val input = if (node.isPassword) "[PROTECTED]" else e.text?.joinToString("")?.take(120)
-        return SkillStep(
-            type = type,
-            pkg = pkg,
-            viewId = viewId,
-            text = if (node.isPassword) null else text,
-            desc = desc,
-            x = center?.first,
-            y = center?.second,
-            input = input,
+    /** App switches ALWAYS become LAUNCH_APP actions - including the first one
+     *  (the v1/v2 bug where the opening app was never recorded). */
+    private fun onWindowChange(pkg: String?) {
+        if (pkg == null || pkg == lastWindowPkg) return
+        lastWindowPkg = pkg
+        add(
+            SkillAction(
+                id = newActionId(),
+                type = "LAUNCH_APP",
+                appPackage = pkg,
+            ),
+            label = "Open ${pkg.substringBefore('.')}",
         )
     }
 
-    private fun addStep(step: SkillStep) {
-        synchronized(stateLock) {
-            val st = _state.value
-            if (!st.active) return
-            if (st.steps.size >= MAX_STEPS) {
-                stop()
-                return
-            }
-            _state.value = st.copy(steps = st.steps + step)
+    private fun onNodeEvent(type: String, verb: String, src: AccessibilityNodeInfo?) {
+        if (src == null) {
+            // The app fired the event without a node - nothing to anchor to.
+            markUnusable()
+            return
         }
-        appendStepToFile(step)
-        postNotification(JarvisApp.instance, _state.value.steps.size)
+        val rect = Rect()
+        runCatching { src.getBoundsInScreen(rect) }.getOrNull()
+        if (rect.isEmpty) {
+            markUnusable()
+            return
+        }
+        if (runCatching { src.isPassword }.getOrDefault(false)) {
+            warn("Skipped a password field - JARVIS never records passwords. Add the text action in the builder.")
+            return
+        }
+        val metrics = MetricsHolder.get()
+        val target = ElementTarget(
+            mode = "MIXED",
+            text = src.text?.toString()?.takeIf { it.isNotBlank() }?.take(80),
+            desc = src.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.take(60),
+            viewId = src.viewIdResourceName,
+            className = src.className?.toString()?.substringAfterLast('.'),
+            fx = if (metrics.first > 0) rect.centerX().toFloat() / metrics.first else null,
+            fy = if (metrics.second > 0) rect.centerY().toFloat() / metrics.second else null,
+            pkg = lastWindowPkg,
+        )
+        add(
+            SkillAction(id = newActionId(), type = type, target = target),
+            label = "$verb ${target.describe()}",
+        )
     }
 
-    /** Exposed for the floating REC bubble live counter. */
-    fun stepCount(): Int = _state.value.steps.size
+    private fun onTextEvent(src: AccessibilityNodeInfo?, texts: List<CharSequence>?) {
+        if (src == null) {
+            markUnusable()
+            return
+        }
+        if (runCatching { src.isPassword }.getOrDefault(false)) {
+            warn("Skipped a password field - JARVIS never records passwords. Add the text action in the builder.")
+            return
+        }
+        val value = texts?.joinToString("")?.takeIf { it.isNotBlank() } ?: return
+        val rect = Rect()
+        runCatching { src.getBoundsInScreen(rect) }.getOrNull()
+        val metrics = MetricsHolder.get()
+        // Debounce: IMEs fire one event per character - keep the LAST value per field.
+        val key = "TEXT:" + (src.viewIdResourceName ?: "${rect.left},${rect.top}") + ":" + lastWindowPkg
+        val now = System.currentTimeMillis()
+        val existing = steps.indexOfLast { it.type == "UI_TEXT" && it.target?.viewId == src.viewIdResourceName && it.target?.pkg == lastWindowPkg }
+        val target = ElementTarget(
+            mode = "MIXED",
+            viewId = src.viewIdResourceName,
+            text = null,
+            desc = null,
+            fx = if (metrics.first > 0 && !rect.isEmpty) rect.centerX().toFloat() / metrics.first else null,
+            fy = if (metrics.second > 0 && !rect.isEmpty) rect.centerY().toFloat() / metrics.second else null,
+            pkg = lastWindowPkg,
+        )
+        val action = SkillAction(id = newActionId(), type = "UI_TEXT", target = target, input = value.take(200))
+        lastStepKey = key to now
+        if (existing >= 0) {
+            steps[existing] = action
+        } else {
+            steps.add(action)
+        }
+        bump { s -> s.copy(steps = steps.toList(), lastCapture = "Type \"${value.take(24)}\"") }
+        persistSession()
+        updateNotification()
+    }
 
-    // ------------------------------------------------------------ notification
+    private fun onScrollEvent(e: AccessibilityEvent) {
+        val now = System.currentTimeMillis()
+        val (k, t) = lastStepKey ?: ("" to 0L)
+        if (k == "SCROLL" && now - t < 700) return // debounce fling bursts
+        lastStepKey = "SCROLL" to now
+        // scrollDeltaY > 0 = scrolling back toward earlier content (API 28+).
+        val dy = runCatching { e.scrollDeltaY }.getOrDefault(0f)
+        val dir = if (dy > 0f) "up" else "down"
+        add(
+            SkillAction(id = newActionId(), type = "SCROLL", dir = dir, pkg = lastWindowPkg),
+            label = "Scroll $dir",
+        )
+    }
 
-    fun postNotification(ctx: Context, stepCount: Int) {
+    // -------------------------------------------------------------- plumbing
+
+    private fun add(action: SkillAction, label: String) {
+        val now = System.currentTimeMillis()
+        val (k, t) = lastStepKey ?: ("" to 0L)
+        if (k == "${action.type}:$label" && now - t < 500) return // duplicate tap burst
+        lastStepKey = "${action.type}:$label" to now
+        if (steps.size >= MAX_STEPS) {
+            warn("Recording stopped at the $MAX_STEPS-action limit - the rest of the task was not captured.")
+            stop()
+            return
+        }
+        steps.add(action)
+        bump { it.copy(steps = steps.toList(), lastCapture = label, suspectNoCapture = false) }
+        persistSession()
+        updateNotification()
+    }
+
+    private fun markUnusable() {
+        bump {
+            val count = it.unusableEvents + 1
+            val w = if (count >= 3 && !it.warnings.any { m -> m.startsWith("This app") }) {
+                "This app is not reporting taps (games/canvas apps often don't). " +
+                    "Build the skill with 'Pick on screen' instead, or the steps will be incomplete."
+            } else it.warnings
+            it.copy(unusableEvents = count, warnings = w)
+        }
+    }
+
+    private fun warn(message: String) {
+        bump { it.copy(warnings = (it.warnings + message).distinct().takeLast(3)) }
+        Logx.w(TAG, message)
+    }
+
+    private fun bump(f: (RecState) -> RecState) {
+        _state.value = f(_state.value)
+    }
+
+    private fun currentApp(): String? = JarvisAccessibilityServiceHolder.pkgProvider?.invoke()
+
+    /** Watchdog: recording with NOTHING captured while the user is elsewhere. */
+    private fun startWatchdog() {
+        val s = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        scope = s
+        s.launch {
+            delay(12_000)
+            while (isActive && _state.value.active) {
+                val st = _state.value
+                if (st.steps.isEmpty() && st.unusableEvents == 0 &&
+                    System.currentTimeMillis() - startedAtMs > 12_000
+                ) {
+                    bump {
+                        it.copy(
+                            suspectNoCapture = true,
+                            warnings = (it.warnings + "Nothing captured yet. If you already tapped around: this app (or the " +
+                                "accessibility service) is not sending events. Check the a11y toggle, or use 'Pick on screen'.").takeLast(3),
+                        )
+                    }
+                }
+                delay(5_000)
+            }
+        }
+    }
+
+    // ----------------------------------------------------------- persistence
+
+    private fun sessionFile(ctx: Context) = File(File(ctx.filesDir, "skills").apply { mkdirs() }, ".session.jsonl")
+
+    private fun persistSession() {
         runCatching {
-            val nm = ctx.getSystemService(android.app.NotificationManager::class.java)
-            val open = PendingIntent.getActivity(
-                ctx, 0,
-                Intent(ctx, com.jarvis.mobile.MainActivity::class.java).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            val stopIntent = PendingIntent.getBroadcast(
-                ctx, 1,
-                Intent(ctx, SkillRecReceiver::class.java).setAction(SkillRecReceiver.ACTION_STOP),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            val n: Notification = android.app.Notification.Builder(ctx, JarvisApp.CH_AGENT)
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setContentTitle("Recording skill")
-                .setContentText("$stepCount steps captured - every tap is recorded, then stop")
-                .setContentIntent(open)
-                .setOngoing(true)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop recording", stopIntent)
-                .build()
-            nm.notify(NOTIF_ID, n)
-        }.onFailure { Logx.w(TAG, "Recording notification failed: ${it.message}") }
+            val f = sessionFile(JarvisApp.instance)
+            f.writeText(steps.joinToString("\n") { json.encodeToString(SkillAction.serializer(), it) })
+        }.onFailure { Logx.w(TAG, "session persist failed: ${it.message}") }
     }
+
+    private fun newActionId(): String = "r${System.currentTimeMillis()}${(0..999).random()}"
+
+    // ---------------------------------------------------------- notification
+
+    private fun postNotification(ctx: Context) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        val stopPi = PendingIntent.getBroadcast(
+            ctx, 0,
+            Intent(ctx, SkillRecReceiver::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = Notification.Builder(ctx, JarvisApp.CH_AGENT)
+            .setContentTitle("Recording skill")
+            .setContentText("${steps.size} actions captured - use your phone normally, then stop")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop recording", stopPi)
+            .build()
+        runCatching { nm.notify(NOTIFICATION_ID, n) }
+    }
+
+    private fun updateNotification() = postNotification(JarvisApp.instance)
 
     private fun cancelNotification(ctx: Context) {
-        runCatching { ctx.getSystemService(android.app.NotificationManager::class.java).cancel(NOTIF_ID) }
+        runCatching { ctx.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID) }
     }
 }
 
-/**
- * Fuses the two capture layers into single steps. Pure JVM logic: every call
- * takes an explicit `now` timestamp, so it is fully deterministic and testable.
- *
- * - A raw DOWN opens a pending tap.
- * - A click/long-click event within [WINDOW_MS] and [RADIUS_PX] of a pending tap
- *   MERGES with it: semantic labels + real coordinates in one step.
- * - A scroll event cancels pendings (that DOWN was the start of the fling).
- * - A pending nobody claims within the window commits as a coordinate TAP.
- * - An event arriving for a raw tap that ALREADY committed (late label) replaces
- *   the coordinate-only step with the semantic one (Out.Replace).
- */
-class RawTapMerger(
-    private val windowMs: Long = WINDOW_MS,
-    private val radiusPx: Int = RADIUS_PX,
-    private val dedupMs: Long = DEDUP_MS,
-) {
-    private data class Pending(val t: Long, val x: Int, val y: Int)
-
-    sealed interface Out {
-        data class Add(val step: SkillStep) : Out
-        data class Replace(val old: SkillStep, val new: SkillStep) : Out
-    }
-
-    private val lock = Any()
-    private val pending = ArrayList<Pending>()
-    private val recent = ArrayList<SkillStep>() // committed coordinate taps, for late-event replaces
-
-    fun onRawDown(now: Long, x: Int, y: Int): List<SkillStep> = synchronized(lock) {
-        val swept = sweepLocked(now)
-        pending.add(Pending(now, x, y))
-        swept
-    }
-
-    fun onEventClick(
-        now: Long,
-        kind: String,
-        pkg: String?,
-        viewId: String?,
-        text: String?,
-        desc: String?,
-        x: Int?,
-        y: Int?,
-    ): List<Out> = synchronized(lock) {
-        val outs = ArrayList<Out>()
-        sweepLocked(now).forEach { outs.add(Out.Add(it)) }
-
-        // 1) Merge with a pending raw tap near the event point.
-        val candidates = pending.withIndex()
-            .filter { now - it.value.t <= windowMs && near(it.value, x, y) }
-        val merged = if (x == null || y == null) candidates.maxByOrNull { it.value.t }
-        else candidates.minByOrNull { Math.abs(it.value.x - x) + Math.abs(it.value.y - y) }
-        if (merged != null) {
-            pending.removeAt(merged.index)
-            outs.add(Out.Add(SkillStep(kind, pkg, viewId, text, desc, merged.value.x, merged.value.y, t = now)))
-            remember(outs.lastOrNull())
-            return@synchronized outs
-        }
-
-        // 2) Event with no pending: was a raw tap already committed nearby (late label)?
-        if (x != null && y != null) {
-            val prior = recent.lastOrNull {
-                it.type == "TAP" && it.viewId == null && now - (it.t ?: 0) <= dedupMs &&
-                    Math.abs(it.x!! - x) + Math.abs(it.y!! - y) <= radiusPx * 2
-            }
-            if (prior != null) {
-                recent.remove(prior)
-                outs.add(Out.Replace(prior, SkillStep(kind, pkg, viewId, text, desc, x, y, t = now)))
-                return@synchronized outs
-            }
-        }
-
-        // 3) Standalone event step (keyboard clicks, precision capture off, pre-34).
-        outs.add(Out.Add(SkillStep(kind, pkg, viewId, text, desc, x, y, t = now)))
-        outs
-    }
-
-    /** A scroll event: cancel pendings in the window (fling start) and sweep the rest. */
-    fun onEventScroll(now: Long): List<SkillStep> = synchronized(lock) {
-        pending.removeAll { now - it.t <= windowMs }
-        sweepLocked(now)
-    }
-
-    /**
-     * Drop the pending tap near (x,y) - the precision stream reclassified that
-     * DOWN as a long-press/swipe which commits itself; without this the pending
-     * would later commit as a duplicate tap.
-     */
-    fun cancelNear(x: Int, y: Int) = synchronized(lock) {
-        pending.removeAll { Math.abs(it.x - x) + Math.abs(it.y - y) <= radiusPx * 2 }
-    }
-
-    /** Commit pendings older than the window; drop anything still inside it. */
-    fun sweep(now: Long): List<SkillStep> = synchronized(lock) { sweepLocked(now) }
-
-    /** Recording stopped: commit every pending immediately. */
-    fun flush(): List<SkillStep> = synchronized(lock) {
-        val outs = pending.map { commitRaw(it, Long.MAX_VALUE) }
-        pending.clear()
-        outs
-    }
-
-    fun reset() = synchronized(lock) {
-        pending.clear(); recent.clear()
-    }
-
-    private fun sweepLocked(now: Long): List<SkillStep> {
-        val due = pending.filter { now - it.t > windowMs }
-        if (due.isEmpty()) return emptyList()
-        pending.removeAll(due)
-        return due.map { commitRaw(it, now) }
-    }
-
-    private fun commitRaw(p: Pending, now: Long): SkillStep {
-        val step = SkillStep("TAP", x = p.x, y = p.y, t = if (now == Long.MAX_VALUE) p.t else now)
-        recent.add(step)
-        if (recent.size > 8) recent.removeAt(0)
-        return step
-    }
-
-    /** Track merged/standalone event steps too, so a later duplicate can be spotted. */
-    private fun remember(out: Out?) {
-        (out as? Out.Add)?.let { if (it.step.type == "TAP") recent.add(it.step) }
-    }
-
-    private fun near(p: Pending, x: Int?, y: Int?): Boolean =
-        x == null || y == null || (Math.abs(p.x - x) + Math.abs(p.y - y)) <= radiusPx
-
-    companion object {
-        const val WINDOW_MS = 1500L
-        const val RADIUS_PX = 48
-        const val DEDUP_MS = 2500L
-    }
+/** Screen metrics accessor wired by the accessibility service (fraction math). */
+object MetricsHolder {
+    @Volatile var provider: (() -> Pair<Int, Int>)? = null
+    fun get(): Pair<Int, Int> = provider?.invoke() ?: (0 to 0)
 }
 
-/**
- * Indirection so the recorder can enrich raw-touch steps, read the current app
- * and toggle precision capture without a dependency cycle on the service class.
- */
-object JarvisAccessibilityServiceHolder {
-    @Volatile var pkgProvider: () -> String? = { null }
-    @Volatile var observeProvider: (Int) -> com.jarvis.mobile.core.observer.ScreenObservation? = { null }
-
-    /** Arm precision touch capture (register TIC + touch-exploration flag). Null when service is down. */
-    @Volatile var precisionEnable: (() -> Unit)? = null
-
-    /** Restore normal touch (flag off + callbacks unregistered). Always safe to call. */
-    @Volatile var precisionDisable: (() -> Unit)? = null
-
-    fun pkg(): String? = pkgProvider()
-    fun observe(max: Int): com.jarvis.mobile.core.observer.ScreenObservation? = observeProvider(max)
-}
-
-/** Manifest-registered receiver backing the "Stop recording" notification action. */
+/** Broadcast receiver backing the "Stop recording" notification action. */
 class SkillRecReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context?, intent: Intent?) {
-        if (intent?.action == ACTION_STOP) SkillRecorder.stop()
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == SkillRecorder.ACTION_STOP) SkillRecorder.stop()
     }
+}
 
-    companion object {
-        const val ACTION_STOP = "com.jarvis.mobile.STOP_SKILL_RECORDING"
-    }
+/** Bridges the recorder to the accessibility service without a hard dependency cycle. */
+object JarvisAccessibilityServiceHolder {
+    var pkgProvider: (() -> String?)? = null
+    var observeProvider: ((Int) -> com.jarvis.mobile.core.observer.ScreenObservation?)? = null
 }

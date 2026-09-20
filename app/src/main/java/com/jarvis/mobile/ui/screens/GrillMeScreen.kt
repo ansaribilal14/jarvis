@@ -27,7 +27,7 @@ import com.jarvis.mobile.ui.theme.Accent
  * working with zero AI.
  */
 @Composable
-fun GrillMeScreen(onClose: () -> Unit) {
+fun GrillMeScreen(onClose: () -> Unit, onEditDraft: () -> Unit = {}) {
     val st by GrillMeEngine.state.collectAsState()
     var answer by remember { mutableStateOf("") }
 
@@ -36,6 +36,7 @@ fun GrillMeScreen(onClose: () -> Unit) {
         if (st.done && st.draft != null) {
             SkillDraftBus.draft.value = st.draft
             GrillMeEngine.clear()
+            onEditDraft()
             onClose()
         }
     }
