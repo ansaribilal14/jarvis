@@ -11,6 +11,7 @@ import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.jarvis.mobile.JarvisApp
+import com.jarvis.mobile.service.RecordBubble
 import com.jarvis.mobile.util.Logx
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -256,7 +257,7 @@ object SkillRecorder {
         val dy = runCatching { e.scrollDeltaY }.getOrDefault(0f)
         val dir = if (dy > 0f) "up" else "down"
         add(
-            SkillAction(id = newActionId(), type = "SCROLL", dir = dir, pkg = lastWindowPkg),
+            SkillAction(id = newActionId(), type = "SCROLL", dir = dir),
             label = "Scroll $dir",
         )
     }
@@ -282,8 +283,8 @@ object SkillRecorder {
     private fun markUnusable() {
         bump {
             val count = it.unusableEvents + 1
-            val w = if (count >= 3 && !it.warnings.any { m -> m.startsWith("This app") }) {
-                "This app is not reporting taps (games/canvas apps often don't). " +
+            val w = if (count >= 3 && it.warnings.none { m -> m.startsWith("This app") }) {
+                it.warnings + "This app is not reporting taps (games/canvas apps often don't). " +
                     "Build the skill with 'Pick on screen' instead, or the steps will be incomplete."
             } else it.warnings
             it.copy(unusableEvents = count, warnings = w)

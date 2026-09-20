@@ -63,7 +63,7 @@ private val CATALOG = listOf(
 
 internal data class AppEntry(val label: String, val pkg: String)
 
-fun queryLaunchableApps(): List<AppEntry> {
+internal fun queryLaunchableApps(): List<AppEntry> {
     val context = JarvisApp.instance
     return runCatching {
         val pm = context.packageManager

@@ -89,7 +89,7 @@ object SkillRunner {
         svc: JarvisAccessibilityService,
         target: ElementTarget,
         timeoutMs: Long = FIND_TIMEOUT_MS,
-    ): Pair<ScreenObservation, com.jarvis.mobile.core.observer.ScreenElement?>? {
+    ): Pair<ScreenObservation, com.jarvis.mobile.core.observer.ScreenElement>? {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (true) {
             val obs = observe(svc)
