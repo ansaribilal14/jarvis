@@ -4,6 +4,7 @@ import com.jarvis.mobile.core.observer.ScreenElement
 import com.jarvis.mobile.core.observer.ScreenObservation
 import com.jarvis.mobile.core.skills.ElementResolver
 import com.jarvis.mobile.core.skills.ElementTarget
+import com.jarvis.mobile.core.skills.SkillAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
