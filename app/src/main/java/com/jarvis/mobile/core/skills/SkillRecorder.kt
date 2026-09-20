@@ -254,7 +254,7 @@ object SkillRecorder {
         if (k == "SCROLL" && now - t < 700) return // debounce fling bursts
         lastStepKey = "SCROLL" to now
         // scrollDeltaY > 0 = scrolling back toward earlier content (API 28+).
-        val dy = runCatching { e.scrollDeltaY }.getOrDefault(0f)
+        val dy: Float = try { e.scrollDeltaY } catch (_: Throwable) { 0f }
         val dir = if (dy > 0f) "up" else "down"
         add(
             SkillAction(id = newActionId(), type = "SCROLL", dir = dir),
