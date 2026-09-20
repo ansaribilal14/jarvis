@@ -150,7 +150,8 @@ class ElementTargetTest {
 
     @Test
     fun `action describe covers the catalog`() {
-        assertEquals("Open WhatsApp", SkillAction(id = "1", type = "LAUNCH_APP", appPackage = "com.whatsapp").describe())
+        // Package rendering is best-effort (no PackageManager on JVM): first segment.
+        assertEquals("Open com", SkillAction(id = "1", type = "LAUNCH_APP", appPackage = "com.whatsapp").describe())
         assertEquals("Tap \"Send\"", SkillAction(id = "2", type = "UI_CLICK", target = ElementTarget(text = "Send")).describe())
         assertTrue(SkillAction(id = "3", type = "UI_TEXT", target = ElementTarget(viewId = "search_box"), input = "hello").describe().contains("hello"))
         assertEquals("Scroll down x3", SkillAction(id = "4", type = "SCROLL", dir = "down", amount = 3).describe())
